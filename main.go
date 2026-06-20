@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/gin-gonic/gin"
 
 	"github.com/fmndantas/payments/internal/controller"
@@ -47,8 +45,6 @@ func getAlbumById(c *gin.Context) {
 */
 
 func main() {
-	fmt.Println("Payments API")
-
 	/*
 		albums = []album{
 			{ID: "1", Title: "Blue Train", Artist: "Jonh Coltrane", Price: 56.99},
@@ -59,10 +55,10 @@ func main() {
 		router.POST("/albums", postAlbums)
 	*/
 
+	// FIXME: make this a env variable
+	tree := dependencies.InitializeDefault("postgres://postgres:postgres@localhost:5432/payments")
+
 	router := gin.Default()
-
-	tree := dependencies.Tree{DB: nil}
-
 	router.GET("health", tree.InjectToController(controller.CheckHealth))
 	router.POST("checkout", tree.InjectToController(controller.Checkout))
 
