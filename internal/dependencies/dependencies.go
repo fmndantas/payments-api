@@ -12,7 +12,7 @@ type Tree struct {
 	DbPool *pgxpool.Pool
 }
 
-// FIXME: the context used for the pool is not the gin.Context
+// FIX: the context used for the pool is not the gin.Context
 func InitializeDefault(connectionString string) *Tree {
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connectionString)
