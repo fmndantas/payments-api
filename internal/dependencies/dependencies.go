@@ -13,8 +13,7 @@ type Tree struct {
 }
 
 // FIX: the context used for the pool is not the gin.Context
-// TODO: -> Initialize
-func InitializeDefault(connectionString string) *Tree {
+func Initialize(connectionString string) *Tree {
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, connectionString)
 

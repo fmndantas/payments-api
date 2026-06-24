@@ -8,12 +8,12 @@ import (
 )
 
 func Initialize(connectionString string, testMode bool) *gin.Engine {
-	tree := dependencies.InitializeDefault(connectionString)
+	tree := dependencies.Initialize(connectionString)
 	if testMode {
 		gin.SetMode(gin.TestMode)
 	}
 	router := gin.Default()
-	router.GET("health", tree.InjectToController(controller.CheckHealth))
+	router.GET("health", tree.InjectToController(controller.Health))
 	router.POST("checkout", tree.InjectToController(controller.Checkout))
 	return router
 }
