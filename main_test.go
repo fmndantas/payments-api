@@ -3,16 +3,21 @@ package main_test
 import (
 	"context"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/fmndantas/payments/internal/dependencies"
+	"github.com/gin-gonic/gin"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
+
+	"github.com/fmndantas/payments"
 )
 
-var tree *dependencies.Tree = nil
+// TODO: having this global variable is a anti-pattern?
+var router *gin.Engine
 
 func TestMain(m *testing.M) {
 	dbName, dbUser, dbPassword := "payments", "postgres", "postgres"
@@ -38,14 +43,17 @@ func TestMain(m *testing.M) {
 		log.Panicf("failed to start PostgreSQL container: %s", err)
 	}
 	connectionString, err := container.ConnectionString(ctx)
-	tree = dependencies.InitializeDefault(connectionString)
+	router = main.Initialize(connectionString, true)
 	code := m.Run()
-	tree = nil
+	router = nil
 	os.Exit(code)
 }
 
-func TestTreeShouldBeInitialized(t *testing.T) {
-	if tree == nil {
-		t.Error("the tree should be initialized here")
+func TestHealthEndpoint(t *testing.T) {
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/health", nil)
+	router.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Error("returned response was not ok")
 	}
 }

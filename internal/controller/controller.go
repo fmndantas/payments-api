@@ -26,6 +26,7 @@ func GetIdRequestForPersistence(originalIdRequest string) (string, error) {
 	return strings.Replace(originalIdRequest, "request:checkout:", "", 1), nil
 }
 
+// TODO -> Health
 func CheckHealth(tree *dependencies.Tree, c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"version": "development"})
 }
