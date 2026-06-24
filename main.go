@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/gin-gonic/gin"
 
+	"github.com/fmndantas/payments/internal/db"
 	"github.com/fmndantas/payments/internal/controller"
 	"github.com/fmndantas/payments/internal/dependencies"
 )
@@ -19,7 +20,8 @@ func Initialize(connectionString string, testMode bool) *gin.Engine {
 }
 
 func main() {
-	// FIX: make this a env variable
-	router := Initialize("postgres://postgres:postgres@localhost:5432/payments", false)
+	// FIX: get this from env
+	dbConfiguration := db.CreateLocalConfiguration()
+	router := Initialize(dbConfiguration.Dsn(), false)
 	router.Run("localhost:8080")
 }

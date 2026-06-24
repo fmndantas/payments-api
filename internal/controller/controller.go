@@ -103,8 +103,6 @@ func Checkout(t *dependencies.Tree, context *gin.Context) {
 		idExternalPayment, idRequestDb, idInternalSourceAccount, idInternalDestinyAccount, true, now,
 	).Scan(&idInternalPayment)
 
-	log.Printf("idInternalPayment: %d", idInternalPayment)
-
 	_, err = tx.Exec(
 		context,
 		`insert into outbox (id_payment, is_pending, next_try_at, created_at)
