@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 
+	"github.com/fmndantas/payments/internal/db"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -13,16 +14,16 @@ type Tree struct {
 }
 
 // FIX: the context used for the pool is not the gin.Context
-func Initialize(connectionString string) *Tree {
+func Initialize(dbConfiguration db.DbConfiguration) *Tree {
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, connectionString)
+	pool, err := pgxpool.New(ctx, dbConfiguration.Dsn())
 
 	if err != nil {
-		log.Fatal("Unable to connect to database: ", err)
+		log.Fatalf("Unable to connect to database: %s", err)
 	}
 
 	if err := pool.Ping(ctx); err != nil {
-		log.Fatal("Unable to ping database: ", err)
+		log.Fatalf("Unable to ping database: %s", err)
 	}
 
 	log.Println("Connected to database successfully")

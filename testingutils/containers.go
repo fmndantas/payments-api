@@ -11,8 +11,9 @@ import (
 	"github.com/fmndantas/payments/internal/db"
 )
 
-func InitializePostgresTestcontainer(ctx context.Context) (*postgres.PostgresContainer, error, func()) {
-	dbConfiguration := db.CreateLocalConfiguration()
+func InitializePostgresTestcontainer(dbConfiguration db.DbConfiguration, ctx context.Context) (
+	*postgres.PostgresContainer, error, func(),
+) {
 	container, err := postgres.Run(
 		ctx,
 		"postgres",
@@ -25,9 +26,12 @@ func InitializePostgresTestcontainer(ctx context.Context) (*postgres.PostgresCon
 		postgres.WithPassword(dbConfiguration.Password),
 		postgres.BasicWaitStrategies(),
 	)
-	return container, err, func() {
+	if err != nil {
+		return nil, err, func() {}
+	}
+	return container, nil, func() {
 		if err := testcontainers.TerminateContainer(container); err != nil {
-			log.Printf("failed to terminate container: %s", err)
+			log.Fatalf("failed to terminate container: %s", err)
 		}
 	}
 }

@@ -18,6 +18,7 @@ import (
 
 	"github.com/fmndantas/payments"
 	"github.com/fmndantas/payments/internal/controller"
+	"github.com/fmndantas/payments/internal/db"
 )
 
 type CheckoutResponse struct {
@@ -37,12 +38,27 @@ var (
 
 func TestMain(m *testing.M) {
 	ctx := context.Background()
-	postgres, err, stopPostgres := containers.InitializePostgresTestcontainer(ctx)
+	dbLocalConfiguration := db.CreateLocalConfiguration()
+	container, err, stopPostgres := containers.InitializePostgresTestcontainer(dbLocalConfiguration, ctx)
 	if err != nil {
-		log.Panicf("failed to start PostgreSQL container: %s", err)
+		log.Fatalf("failed to start PostgreSQL container: %s", err)
 	}
-	connectionString, err := postgres.ConnectionString(ctx)
-	router = main.Initialize(connectionString, true)
+	host, err := container.Host(ctx)
+	if err != nil {
+		log.Fatalf("failed to get testcontainer host: %s", err)
+	}
+	port, err := container.MappedPort(ctx, fmt.Sprintf("%d", dbLocalConfiguration.Port))
+	if err != nil {
+		log.Fatalf("failed to get testcontainer mapped port: %s", err)
+	}
+	dbTestConfiguration := db.DbConfiguration{
+		Host:     host,
+		Port:     int(port.Num()),
+		Database: dbLocalConfiguration.Database,
+		Username: dbLocalConfiguration.Username,
+		Password: dbLocalConfiguration.Password,
+	}
+	router = main.Initialize(dbTestConfiguration, true)
 	code := m.Run()
 	router = nil
 	stopPostgres()

@@ -3,13 +3,13 @@ package main
 import (
 	"github.com/gin-gonic/gin"
 
-	"github.com/fmndantas/payments/internal/db"
 	"github.com/fmndantas/payments/internal/controller"
+	"github.com/fmndantas/payments/internal/db"
 	"github.com/fmndantas/payments/internal/dependencies"
 )
 
-func Initialize(connectionString string, testMode bool) *gin.Engine {
-	tree := dependencies.Initialize(connectionString)
+func Initialize(dbConfiguration db.DbConfiguration, testMode bool) *gin.Engine {
+	tree := dependencies.Initialize(dbConfiguration)
 	if testMode {
 		gin.SetMode(gin.TestMode)
 	}
@@ -22,6 +22,6 @@ func Initialize(connectionString string, testMode bool) *gin.Engine {
 func main() {
 	// FIX: get this from env
 	dbConfiguration := db.CreateLocalConfiguration()
-	router := Initialize(dbConfiguration.Dsn(), false)
+	router := Initialize(dbConfiguration, false)
 	router.Run("localhost:8080")
 }
