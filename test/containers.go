@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"path/filepath"
+	"runtime"
 
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -18,8 +19,8 @@ func InitializePostgresTestcontainer(dbConfiguration db.DbConfiguration, ctx con
 		ctx,
 		"postgres",
 		postgres.WithOrderedInitScripts(
-			filepath.Join(filepath.Join("migrations", "001_initial_migration.sql")),
-			filepath.Join(filepath.Join("migrations", "002_create_accounts.sql")),
+			migrationPath("001_initial_migration.sql"),
+			migrationPath("002_create_accounts.sql"),
 		),
 		postgres.WithDatabase(dbConfiguration.Database),
 		postgres.WithUsername(dbConfiguration.Username),
@@ -34,4 +35,14 @@ func InitializePostgresTestcontainer(dbConfiguration db.DbConfiguration, ctx con
 			log.Fatalf("failed to terminate container: %s", err)
 		}
 	}
+}
+
+func migrationPath(filename string) string {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("unable to resolve migration path")
+	}
+
+	projectRoot := filepath.Dir(filepath.Dir(currentFile))
+	return filepath.Join(projectRoot, "migrations", filename)
 }
