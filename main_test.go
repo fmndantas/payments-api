@@ -14,7 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/fmndantas/payments/testingutils"
+	"github.com/fmndantas/payments/test"
 
 	"github.com/fmndantas/payments"
 	"github.com/fmndantas/payments/internal/controller"
@@ -25,12 +25,6 @@ type CheckoutResponse struct {
 	IdPayment string `json:"id_payment"`
 }
 
-// TODO: better to seed data and get ids?
-const (
-	idSourceAccount  string = "e4215def-6f52-4f3a-8cd7-23e261bad9e7"
-	IdDestinyAccount string = "597cb0af-0562-496b-9802-94dc5b0f082d"
-)
-
 // TODO: having this global variable is a anti-pattern?
 var (
 	router *gin.Engine
@@ -39,7 +33,7 @@ var (
 func TestMain(m *testing.M) {
 	ctx := context.Background()
 	dbLocalConfiguration := db.CreateLocalConfiguration()
-	container, err, stopPostgres := containers.InitializePostgresTestcontainer(dbLocalConfiguration, ctx)
+	container, err, stopPostgres := test.InitializePostgresTestcontainer(dbLocalConfiguration, ctx)
 	if err != nil {
 		log.Fatalf("failed to start PostgreSQL container: %s", err)
 	}
@@ -96,8 +90,8 @@ func TestCheckoutWithoutBody(t *testing.T) {
 func TestCheckoutHappyPath(t *testing.T) {
 	w := httptest.NewRecorder()
 	payload := controller.CheckoutRequest{
-		IdSourceAccount:  idSourceAccount,
-		IdDestinyAccount: IdDestinyAccount,
+		IdSourceAccount:  test.IdSourceAccountAsString,
+		IdDestinyAccount: test.IdDestinyAccountAsString,
 		IdRequest:        fmt.Sprintf("request:checkout:%s", uuid.NewString()),
 	}
 	payloadJson, _ := json.Marshal(payload)
@@ -116,8 +110,8 @@ func TestCheckoutHappyPath(t *testing.T) {
 
 func TestCheckoutIdempotency(t *testing.T) {
 	payload := controller.CheckoutRequest{
-		IdSourceAccount:  idSourceAccount,
-		IdDestinyAccount: IdDestinyAccount,
+		IdSourceAccount:  test.IdSourceAccountAsString,
+		IdDestinyAccount: test.IdDestinyAccountAsString,
 		IdRequest:        fmt.Sprintf("request:checkout:%s", uuid.NewString()),
 	}
 	payloadJson, _ := json.Marshal(payload)
