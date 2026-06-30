@@ -8,20 +8,26 @@ import (
 	"github.com/fmndantas/payments/internal/dependencies"
 )
 
-func Initialize(dbConfiguration db.DbConfiguration, testMode bool) *gin.Engine {
-	tree := dependencies.Initialize(dbConfiguration)
+func Initialize(dbConfiguration db.DbConfiguration, testMode bool) (*gin.Engine, error) {
+	tree, err := dependencies.Initialize(dbConfiguration)
+	if err != nil {
+		return nil, err
+	}
 	if testMode {
 		gin.SetMode(gin.TestMode)
 	}
 	router := gin.Default()
 	router.GET("health", tree.InjectToController(controller.Health))
 	router.POST("checkout", tree.InjectToController(controller.Checkout))
-	return router
+	return router, nil
 }
 
 func main() {
 	// FIX: get this from env
 	dbConfiguration := db.CreateLocalConfiguration()
-	router := Initialize(dbConfiguration, false)
+	router, err := Initialize(dbConfiguration, false)
+	if err != nil {
+		panic(err)
+	}
 	router.Run("localhost:8080")
 }

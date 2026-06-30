@@ -58,7 +58,10 @@ func TestMain(m *testing.M) {
 		Username: dbLocalConfiguration.Username,
 		Password: dbLocalConfiguration.Password,
 	}
-	router = main.Initialize(dbTestConfiguration, true)
+	router, err = main.Initialize(dbTestConfiguration, true)
+	if err != nil {
+		log.Fatal(err)
+	}
 	code := m.Run()
 	router = nil
 	stopPostgres()

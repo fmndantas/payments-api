@@ -2,6 +2,7 @@ package dependencies
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	"github.com/fmndantas/payments/internal/db"
@@ -14,23 +15,23 @@ type Tree struct {
 }
 
 // FIX: the context used for the pool is not the gin.Context
-func Initialize(dbConfiguration db.DbConfiguration) *Tree {
+func Initialize(dbConfiguration db.DbConfiguration) (*Tree, error) {
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dbConfiguration.Dsn())
 
 	if err != nil {
-		log.Fatalf("Unable to connect to database: %s", err)
+		return nil, fmt.Errorf("unable to connect to database: %s", err)
 	}
 
 	if err := pool.Ping(ctx); err != nil {
-		log.Fatalf("Unable to ping database: %s", err)
+		return nil, fmt.Errorf("unable to ping database: %s", err)
 	}
 
 	log.Println("Connected to database successfully")
 
 	return &Tree{
 		DbPool: pool,
-	}
+	}, nil
 }
 
 func (tree *Tree) InjectToController(
