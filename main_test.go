@@ -113,3 +113,24 @@ func TestCheckoutHappyPath(t *testing.T) {
 		t.Errorf("id_payment is empty")
 	}
 }
+
+func TestCheckoutIdempotency(t *testing.T) {
+	payload := controller.CheckoutRequest{
+		IdSourceAccount:  idSourceAccount,
+		IdDestinyAccount: IdDestinyAccount,
+		IdRequest:        fmt.Sprintf("request:checkout:%s", uuid.NewString()),
+	}
+	payloadJson, _ := json.Marshal(payload)
+	for i := range 5 {
+		req, _ := http.NewRequest("POST", "/checkout", bytes.NewBuffer(payloadJson))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if i == 0 {
+			// first time, gets 200
+			expectStatusCode(t, w, 200)
+		} else {
+			// repetead id_request avoids reprocessings
+			expectStatusCode(t, w, 409)
+		}
+	}
+}
