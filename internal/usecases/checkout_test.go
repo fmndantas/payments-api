@@ -6,11 +6,12 @@ import (
 	"log"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/fmndantas/payments/internal/db"
 	"github.com/fmndantas/payments/internal/dependencies"
 	"github.com/fmndantas/payments/internal/usecases"
 	"github.com/fmndantas/payments/test"
-	"github.com/google/uuid"
 )
 
 // TODO: remove duplication with main_test?

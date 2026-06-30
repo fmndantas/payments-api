@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/fmndantas/payments/internal/db"
-
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/fmndantas/payments/internal/db"
 )
 
 type Tree struct {

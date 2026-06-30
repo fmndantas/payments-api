@@ -1,8 +1,9 @@
 package usecases
 
 import (
-	"github.com/fmndantas/payments/internal/dependencies"
 	"github.com/google/uuid"
+
+	"github.com/fmndantas/payments/internal/dependencies"
 )
 
 func HandleCheckout(
