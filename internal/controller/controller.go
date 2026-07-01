@@ -30,6 +30,7 @@ func Health(tree *dependencies.Tree, c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"version": "development"})
 }
 
+// TODO: use HandleCheckout here
 func Checkout(t *dependencies.Tree, context *gin.Context) {
 	now := time.Now()
 

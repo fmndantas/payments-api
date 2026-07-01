@@ -16,6 +16,7 @@ import (
 
 // TODO: remove duplication with main_test?
 func TestHappyPath(t *testing.T) {
+	// arrange
 	ctx := context.Background()
 	dbLocalConfiguration := db.CreateLocalConfiguration()
 	container, err, stopPostgres := test.InitializePostgresTestcontainer(
@@ -44,13 +45,29 @@ func TestHappyPath(t *testing.T) {
 	if err != nil {
 		log.Fatalf("failed to initialize the dependencies tree: %s", err)
 	}
-
-	_, err = usecases.HandleCheckout(
-		tree, uuid.New(), test.IdDestinyAccountAsUuid(), test.IdDestinyAccountAsUuid(),
+	// act
+	idPaymentExternal, err := usecases.HandleCheckout(
+		tree, ctx, uuid.New(), test.IdDestinyAccountAsUuid(), test.IdDestinyAccountAsUuid(),
 	)
+	log.Printf("idPaymentExternal = %s", idPaymentExternal)
+	// assert
 	if err != nil {
-		log.Fatalf("failed to run checkout: %s", err)
+		log.Fatalf("checkout running resulted in error: %s", err)
 	}
-	// check if payment was saved correctly
-	// check if outbox was saved correctly
+	// checks if payment exists
+	var idPaymentInternal int64
+	err = tree.DbPool.QueryRow(
+		ctx, "select id_internal from payment where id_external = $1", idPaymentExternal,
+	).Scan(&idPaymentInternal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// checks if outbox was saved correctly
+	var idOutbox int64
+	err = tree.DbPool.QueryRow(
+		ctx, "select id from outbox where id_payment = $1", idPaymentInternal,
+	).Scan(&idOutbox)
+	if err != nil {
+		t.Fatal(err)
+	}
 }
