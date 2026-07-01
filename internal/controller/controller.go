@@ -2,15 +2,14 @@ package controller
 
 import (
 	"errors"
-	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	"github.com/fmndantas/payments/internal/dependencies"
+	"github.com/fmndantas/payments/internal/usecases"
 )
 
 type CheckoutRequest struct {
@@ -30,96 +29,49 @@ func Health(tree *dependencies.Tree, c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"version": "development"})
 }
 
-// TODO: use HandleCheckout here
 func Checkout(t *dependencies.Tree, context *gin.Context) {
-	now := time.Now()
-
-	var checkoutRequest *CheckoutRequest
-	if err := context.ShouldBindJSON(&checkoutRequest); err != nil {
+	var request *CheckoutRequest
+	if err := context.ShouldBindJSON(&request); err != nil {
 		context.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	idRequestDb, err := GetIdRequestForPersistence(checkoutRequest.IdRequest)
-
+	idRequestWithoutPrefix, err := GetIdRequestForPersistence(request.IdRequest)
 	if err != nil {
 		context.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	var foo string
-	err = t.DbPool.QueryRow(context, "select id_request from payment where id_request = $1", idRequestDb).Scan(&foo)
+	var validation error
+	idRequest, err := uuid.Parse(idRequestWithoutPrefix)
+	validation = errors.Join(validation, err)
 
-	if err == nil {
-		context.JSON(http.StatusConflict, gin.H{"error": "this request was already received"})
+	idSourceAccount, err := uuid.Parse(request.IdSourceAccount)
+	validation = errors.Join(validation, err)
+
+	idDestinyAccount, err := uuid.Parse(request.IdDestinyAccount)
+	validation = errors.Join(validation, err)
+
+	if validation != nil {
+		context.JSON(http.StatusBadRequest, gin.H{"error": validation.Error()})
 		return
 	}
 
-	accountsRows, err := t.DbPool.Query(
-		context,
-		"select id_internal, id_external from account where id_external = $1 or id_external = $2",
-		checkoutRequest.IdSourceAccount,
-		checkoutRequest.IdDestinyAccount,
+	idExternalPayment, err := usecases.HandleCheckout(
+		t, context, idRequest, idSourceAccount, idDestinyAccount,
 	)
 
 	if err != nil {
-		context.JSON(http.StatusInternalServerError, gin.H{"error": "error when fetching accounts"})
-		return
-	}
-
-	defer accountsRows.Close()
-
-	var idInternalSourceAccount, idInternalDestinyAccount int
-	for accountsRows.Next() {
-		var idInternal int
-		var idExternal string
-		accountsRows.Scan(&idInternal, &idExternal)
-		if idExternal == checkoutRequest.IdSourceAccount {
-			idInternalSourceAccount = idInternal
+		var statusCode int
+		switch {
+		case errors.Is(err, usecases.ErrorCheckoutAtLeastOneAccountIsMissing):
+			statusCode = http.StatusBadRequest
+		case errors.Is(err, usecases.ErrorCheckoutIdRequestAlreadyWasProcessed):
+			statusCode = http.StatusConflict
+		default:
+			statusCode = http.StatusInternalServerError
 		}
-		if idExternal == checkoutRequest.IdDestinyAccount {
-			idInternalDestinyAccount = idInternal
-		}
-	}
-
-	if idInternalSourceAccount == 0 || idInternalDestinyAccount == 0 {
-		context.JSON(http.StatusBadRequest, gin.H{"error": "at least one account is missing"})
-		return
-	}
-
-	idExternalPayment, idInternalPayment := uuid.New(), 0
-
-	tx, err := t.DbPool.Begin(context)
-
-	if err != nil {
-		context.JSON(http.StatusInternalServerError, gin.H{"error": "error when initializing the transaction"})
-		return
-	}
-
-	_ = tx.QueryRow(
-		context,
-		`insert into payment(id_external, id_request, id_source_account, id_destiny_account, is_pending, created_at)
-		values ($1, $2, $3, $4, $5, $6)
-		returning id_internal`,
-		idExternalPayment, idRequestDb, idInternalSourceAccount, idInternalDestinyAccount, true, now,
-	).Scan(&idInternalPayment)
-
-	_, err = tx.Exec(
-		context,
-		`insert into outbox (id_payment, is_pending, next_try_at, created_at)
-		values ($1, $2, $3, $4)`,
-		idInternalPayment, true, now, now,
-	)
-
-	defer tx.Rollback(context)
-
-	if err != nil {
-		log.Panicf("%s", err)
-		return
-	}
-
-	if err := tx.Commit(context); err != nil {
-		log.Panicf("%s", err)
+		context.JSON(statusCode, gin.H{"error": err.Error()})
 		return
 	}
 

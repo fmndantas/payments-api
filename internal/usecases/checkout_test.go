@@ -54,7 +54,7 @@ func TestHappyPath(t *testing.T) {
 	if err != nil {
 		log.Fatalf("checkout running resulted in error: %s", err)
 	}
-	// checks if payment exists
+	// checks if payment was created
 	var idPaymentInternal int64
 	err = tree.DbPool.QueryRow(
 		ctx, "select id_internal from payment where id_external = $1", idPaymentExternal,
@@ -62,7 +62,7 @@ func TestHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// checks if outbox was saved correctly
+	// checks if outbox was created
 	var idOutbox int64
 	err = tree.DbPool.QueryRow(
 		ctx, "select id from outbox where id_payment = $1", idPaymentInternal,
