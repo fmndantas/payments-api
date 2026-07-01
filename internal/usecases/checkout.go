@@ -13,7 +13,6 @@ import (
 var (
 	ErrorCheckoutAtLeastOneAccountIsMissing   = errors.New("at least one account is missing")
 	ErrorCheckoutIdRequestAlreadyWasProcessed = errors.New("this request was already processed")
-	emptyUuid                                 = uuid.UUID{}
 )
 
 func HandleCheckout(
@@ -27,7 +26,7 @@ func HandleCheckout(
 	err := t.DbPool.QueryRow(context, "select id_request from payment where id_request = $1", idRequest).Scan(&foo)
 
 	if err == nil {
-		return emptyUuid, ErrorCheckoutIdRequestAlreadyWasProcessed
+		return uuid.Nil, ErrorCheckoutIdRequestAlreadyWasProcessed
 	}
 
 	accountsRows, err := t.DbPool.Query(
@@ -38,7 +37,7 @@ func HandleCheckout(
 	)
 
 	if err != nil {
-		return emptyUuid, err
+		return uuid.Nil, err
 	}
 	defer accountsRows.Close()
 
@@ -61,13 +60,13 @@ func HandleCheckout(
 	}
 
 	if idInternalSourceAccount == nil || idInternalDestinyAccount == nil {
-		return emptyUuid, ErrorCheckoutAtLeastOneAccountIsMissing
+		return uuid.Nil, ErrorCheckoutAtLeastOneAccountIsMissing
 	}
 
 	tx, err := t.DbPool.Begin(context)
 
 	if err != nil {
-		return emptyUuid, err
+		return uuid.Nil, err
 	}
 
 	now, idExternalPayment, idInternalPayment := time.Now(), uuid.New(), 0
@@ -80,7 +79,7 @@ func HandleCheckout(
 	).Scan(&idInternalPayment)
 
 	if err != nil {
-		return emptyUuid, err
+		return uuid.Nil, err
 	}
 
 	_, err = tx.Exec(
@@ -92,11 +91,11 @@ func HandleCheckout(
 	defer tx.Rollback(context)
 
 	if err != nil {
-		return emptyUuid, err
+		return uuid.Nil, err
 	}
 
 	if err := tx.Commit(context); err != nil {
-		return emptyUuid, err
+		return uuid.Nil, err
 	}
 
 	return idExternalPayment, nil
