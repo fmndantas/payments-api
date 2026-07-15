@@ -14,9 +14,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/fmndantas/payments/cmd/api"
 	"github.com/fmndantas/payments/test"
 
-	"github.com/fmndantas/payments"
 	"github.com/fmndantas/payments/internal/controller"
 	"github.com/fmndantas/payments/internal/db"
 )
