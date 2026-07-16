@@ -8,6 +8,6 @@ import (
 
 func TestNilUuid(t *testing.T) {
 	if foo := uuid.Nil; foo != (uuid.UUID{}) {
-		t.Errorf("uuid.UUID{} != uuid.Nil", foo)
+		t.Errorf("uuid.UUID{} != uuid.Nil. foo = %v", foo)
 	}
 }

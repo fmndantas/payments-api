@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/fmndantas/payments/internal/controller"
@@ -26,8 +28,11 @@ func main() {
 	// FIX: get this from env
 	dbConfiguration := db.CreateLocalConfiguration()
 	router, err := Initialize(dbConfiguration, false)
+
 	if err != nil {
-		panic(err)
+		log.Fatalln(err)
+		return
 	}
+
 	router.Run("localhost:8080")
 }
