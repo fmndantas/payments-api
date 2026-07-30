@@ -18,24 +18,27 @@ var reserveOutboxEventsCommand = `
 with selected_outbox_events as (
 	select id from outbox
 	where is_pending = true
-	and next_try_at <= $1
-	and id_target_worker is null
+	and next_try_at < $1
+	and (locked_until is null or locked_until < $1)
+	order by id
 	limit $2
+	for update skip locked
 ) 
 update outbox
-set id_target_worker = $3
+set locked_until = $3, 
+    lock_token = $4
 from selected_outbox_events
 where outbox.id = selected_outbox_events.id;
 `
 
-var getOutboxEventsByIdWorker = `
+var getOutboxEventsByLockToken = `
 select outbox.id,
 	   payment.id_external, 
 	   outbox.id_payment,
 	   outbox.attempt_count
 from payment 
 join outbox on payment.id_internal = outbox.id_payment
-where outbox.id_target_worker = $1;
+where outbox.lock_token = $1;
 `
 
 var markOutboxEventAsErroredCommand = `
@@ -43,8 +46,7 @@ update outbox set
 	next_try_at = $1,
 	attempt_count = attempt_count + 1, 
 	last_error = $2,
-	id_target_worker = null
-where id = $3;
+where id = $3 and lock_token = $4;
 `
 
 var markOutboxEventAsSuccessfulCommand = `
@@ -53,7 +55,7 @@ update outbox set
 	processed_at = $1,
 	attempt_count = attempt_count + 1,
 	id_target_worker = null
-where id = $2
+where id = $2 and lock_token = $3
 `
 
 var markPaymentAsSuccessfulCommand = `
@@ -82,9 +84,10 @@ func processOutboxEvents(
 	tree *dependencies.Tree,
 	now time.Time,
 	batchSize int,
-	idWorker uuid.UUID,
 ) error {
 	log.Println("processing outbox events")
+
+	lockToken := uuid.New()
 
 	tx, err := tree.DbPool.Begin(context)
 
@@ -92,7 +95,14 @@ func processOutboxEvents(
 		return err
 	}
 
-	tag, err := tx.Exec(context, reserveOutboxEventsCommand, now, batchSize, idWorker)
+	tag, err := tx.Exec(
+		context,
+		reserveOutboxEventsCommand,
+		now,
+		batchSize,
+		now.Add(10*time.Minute),
+		lockToken,
+	)
 	defer tx.Rollback(context)
 
 	if err != nil {
@@ -105,13 +115,13 @@ func processOutboxEvents(
 
 	log.Printf("outbox events were successfully reserved. Number of events: %d\n", tag.RowsAffected())
 
-	outboxEventsRows, err := tree.DbPool.Query(context, getOutboxEventsByIdWorker, idWorker)
+	outboxEventsRows, err := tree.DbPool.Query(context, getOutboxEventsByLockToken, lockToken)
 
 	if err != nil {
 		return err
 	}
 
-	outboxEvents := make([]OutboxEvent, 0)
+	outboxEvents := make([]OutboxEvent, 0, batchSize)
 	for outboxEventsRows.Next() {
 		var event OutboxEvent
 		if err := outboxEventsRows.Scan(&event.IdOutbox, &event.IdExternalPayment, &event.IdInternalPayment, &event.AttemptCount); err != nil {
@@ -129,14 +139,14 @@ func processOutboxEvents(
 	numberOfErrors := 0
 	for _, outboxEvent := range outboxEvents {
 		pspHttpResponse, sendErr := sendOutboxEventToPsp(context, outboxEvent)
-		if persistErr := persistEventUpdate(context, tree, outboxEvent, pspHttpResponse, sendErr); persistErr != nil {
+		if persistErr := persistEventUpdate(context, tree, outboxEvent, pspHttpResponse, sendErr, lockToken); persistErr != nil {
 			numberOfErrors++
 		}
 	}
 
 	log.Printf("processed %d outbox events. number of errors: %d\n", tag.RowsAffected(), numberOfErrors)
 
-	// TODO: makes sense to return always nil? 
+	// TODO: makes sense to return always nil?
 	return nil
 }
 
@@ -179,13 +189,14 @@ func persistEventUpdate(
 	event OutboxEvent,
 	pspHttpResponse PspHttpResponse,
 	err error,
+	lockToken string,
 ) error {
 	if context.Err() != nil {
-		return markEventAsErrored(context, tree, event, context.Err())
+		return markEventAsErrored(context, tree, event, context.Err(), lockToken)
 	}
 
 	if err != nil {
-		return markEventAsErrored(context, tree, event, err)
+		return markEventAsErrored(context, tree, event, err, lockToken)
 	}
 
 	if pspHttpResponse.HttpStatusCode >= 400 {
@@ -194,13 +205,19 @@ func persistEventUpdate(
 			pspHttpResponse.HttpStatusCode,
 			pspHttpResponse.JsonBody,
 		)
-		return markEventAsErrored(context, tree, event, err)
+		return markEventAsErrored(context, tree, event, err, lockToken)
 	}
 
-	return markEventAsSuccessful(context, tree, pspHttpResponse, event)
+	return markEventAsSuccessful(context, tree, pspHttpResponse, event, lockToken)
 }
 
-func markEventAsErrored(context context.Context, tree *dependencies.Tree, event OutboxEvent, err error) error {
+func markEventAsErrored(
+	context context.Context,
+	tree *dependencies.Tree,
+	event OutboxEvent,
+	err error,
+	lockToken string,
+) error {
 	tx, txErr := tree.DbPool.Begin(context)
 	defer tx.Rollback(context)
 
@@ -209,13 +226,13 @@ func markEventAsErrored(context context.Context, tree *dependencies.Tree, event 
 	}
 
 	// FIX: instead of time.Now(), add exponential_backoff to next_try_at
-	tag, txErr := tx.Exec(context, markOutboxEventAsErroredCommand, time.Now(), err.Error(), event.IdOutbox)
+	tag, txErr := tx.Exec(context, markOutboxEventAsErroredCommand, time.Now(), err.Error(), event.IdOutbox, lockToken)
 
 	if txErr != nil {
 		return txErr
 	}
 
-	if tag.RowsAffected() != 0 {
+	if tag.RowsAffected() != 1 {
 		tx.Rollback(context)
 		return fmt.Errorf("number of rows affected by mark was error was != 1: %d", tag.RowsAffected())
 	}
@@ -227,7 +244,13 @@ func markEventAsErrored(context context.Context, tree *dependencies.Tree, event 
 	return nil
 }
 
-func markEventAsSuccessful(context context.Context, tree *dependencies.Tree, pspHttpResponse PspHttpResponse, event OutboxEvent) error {
+func markEventAsSuccessful(
+	context context.Context,
+	tree *dependencies.Tree,
+	pspHttpResponse PspHttpResponse,
+	event OutboxEvent,
+	lockToken string,
+) error {
 	tx, txErr := tree.DbPool.Begin(context)
 	defer tx.Rollback(context)
 
@@ -235,7 +258,7 @@ func markEventAsSuccessful(context context.Context, tree *dependencies.Tree, psp
 		return txErr
 	}
 
-	_, err := tx.Exec(context, markOutboxEventAsSuccessfulCommand, time.Now(), event.IdOutbox)
+	_, err := tx.Exec(context, markOutboxEventAsSuccessfulCommand, time.Now(), event.IdOutbox, lockToken)
 
 	if err != nil {
 		return err
