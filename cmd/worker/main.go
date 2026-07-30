@@ -84,7 +84,7 @@ func processOutboxEvents(
 	batchSize int,
 	idWorker uuid.UUID,
 ) error {
-	log.Println("Processing outbox events")
+	log.Println("processing outbox events")
 
 	tx, err := tree.DbPool.Begin(context)
 
@@ -103,7 +103,7 @@ func processOutboxEvents(
 		return err
 	}
 
-	log.Printf("Outbox events were successfully reserved. Number of events: %d\n", tag.RowsAffected())
+	log.Printf("outbox events were successfully reserved. Number of events: %d\n", tag.RowsAffected())
 
 	outboxEventsRows, err := tree.DbPool.Query(context, getOutboxEventsByIdWorker, idWorker)
 
@@ -111,31 +111,32 @@ func processOutboxEvents(
 		return err
 	}
 
-	ch := make(chan error)
-
-	go func() {
-		defer close(ch)
-		for outboxEventsRows.Next() {
-			if context.Err() != nil {
-				return
-			}
-
-			var event OutboxEvent
-			outboxEventsRows.Scan(&event.IdOutbox, &event.IdExternalPayment, &event.IdInternalPayment, &event.AttemptCount)
-			pspHttpResponse, err := sendOutboxEventToPsp(context, event)
-			ch <- persistEventUpdate(context, tree, event, pspHttpResponse, err)
+	outboxEvents := make([]OutboxEvent, 0)
+	for outboxEventsRows.Next() {
+		var event OutboxEvent
+		if err := outboxEventsRows.Scan(&event.IdOutbox, &event.IdExternalPayment, &event.IdInternalPayment, &event.AttemptCount); err != nil {
+			return fmt.Errorf("scan outbox event: %w", err)
 		}
-	}()
+		outboxEvents = append(outboxEvents, event)
+	}
 
+	outboxEventsRows.Close()
+	if err := outboxEventsRows.Err(); err != nil {
+		return fmt.Errorf("read outbox events: %w", err)
+	}
+
+	// TODO: paralellize
 	numberOfErrors := 0
-	for err := range ch {
-		if err != nil {
+	for _, outboxEvent := range outboxEvents {
+		pspHttpResponse, sendErr := sendOutboxEventToPsp(context, outboxEvent)
+		if persistErr := persistEventUpdate(context, tree, outboxEvent, pspHttpResponse, sendErr); persistErr != nil {
 			numberOfErrors++
 		}
 	}
 
-	log.Printf("Processed %d outbox events. Number of errors: %d\n", tag.RowsAffected(), numberOfErrors)
+	log.Printf("processed %d outbox events. number of errors: %d\n", tag.RowsAffected(), numberOfErrors)
 
+	// TODO: makes sense to return always nil? 
 	return nil
 }
 
@@ -150,19 +151,19 @@ func sendOutboxEventToPsp(context context.Context, _ OutboxEvent) (PspHttpRespon
 		return PspHttpResponse{}, context.Err()
 	}
 
-	foo := rand.IntN(100)
+	randomHttpStatusCode := rand.IntN(100)
 
-	if foo > 75 {
+	if randomHttpStatusCode > 75 {
 		return PspHttpResponse{
 			HttpStatusCode: 500,
 			JsonBody:       "{ \"error\": \"the server couldn't process the request\"}",
 		}, nil
-	} else if foo > 50 {
+	} else if randomHttpStatusCode > 50 {
 		return PspHttpResponse{
 			HttpStatusCode: 429,
 			JsonBody:       "{\"error\": \"the server is busy\"}",
 		}, nil
-	} else if foo > 25 {
+	} else if randomHttpStatusCode > 25 {
 		return PspHttpResponse{}, errors.New("This is an unexpected error")
 	} else {
 		return PspHttpResponse{
@@ -189,19 +190,16 @@ func persistEventUpdate(
 
 	if pspHttpResponse.HttpStatusCode >= 400 {
 		err := fmt.Errorf(
-			"Error after sent event to PSP: %d. Body: \"%v\"",
+			"after sent event to psp: %d; body: \"%v\"",
 			pspHttpResponse.HttpStatusCode,
 			pspHttpResponse.JsonBody,
 		)
 		return markEventAsErrored(context, tree, event, err)
 	}
 
-	// FIX: add errored case where id_psp_payment is not present in pspResult.JsonBody
-
 	return markEventAsSuccessful(context, tree, pspHttpResponse, event)
 }
 
-// FIX: add exponential_backoff to next_try_at
 func markEventAsErrored(context context.Context, tree *dependencies.Tree, event OutboxEvent, err error) error {
 	tx, txErr := tree.DbPool.Begin(context)
 	defer tx.Rollback(context)
@@ -210,6 +208,7 @@ func markEventAsErrored(context context.Context, tree *dependencies.Tree, event 
 		return txErr
 	}
 
+	// FIX: instead of time.Now(), add exponential_backoff to next_try_at
 	tag, txErr := tx.Exec(context, markOutboxEventAsErroredCommand, time.Now(), err.Error(), event.IdOutbox)
 
 	if txErr != nil {
@@ -218,7 +217,7 @@ func markEventAsErrored(context context.Context, tree *dependencies.Tree, event 
 
 	if tag.RowsAffected() != 0 {
 		tx.Rollback(context)
-		return fmt.Errorf("Number of rows affected by mark was error was != 1: %d", tag.RowsAffected())
+		return fmt.Errorf("number of rows affected by mark was error was != 1: %d", tag.RowsAffected())
 	}
 
 	if txErr = tx.Commit(context); txErr != nil {
@@ -241,6 +240,8 @@ func markEventAsSuccessful(context context.Context, tree *dependencies.Tree, psp
 	if err != nil {
 		return err
 	}
+
+	// FIX: add errored case where id_psp_payment is not present in pspResult.JsonBody
 
 	_, err = tx.Exec(
 		context,
