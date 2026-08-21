@@ -2,6 +2,9 @@ package db
 
 import (
 	"fmt"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 type DbConfiguration struct {
@@ -10,6 +13,32 @@ type DbConfiguration struct {
 	Database string
 	Username string
 	Password string
+}
+
+type Outbox struct {
+	Id                int64      `db:"id"`
+	IdInternalPayment int64      `db:"id_payment"`
+	IsPending         bool       `db:"is_pending"`
+	NextTryAt         time.Time  `db:"next_try_at"`
+	AttemptCount      int        `db:"attempt_count"`
+	LastError         *string    `db:"last_error"`
+	LockedUntil       *time.Time `db:"locked_until"`
+	LockToken         *uuid.UUID `db:"lock_token"`
+	CreatedAt         time.Time  `db:"created_at"`
+	ProcessedAt       *time.Time `db:"processed_at"`
+}
+
+type Payment struct {
+	IdInternal       int64      `db:"id_internal"`
+	IdExternal       uuid.UUID  `db:"id_external"`
+	IdRequest        uuid.UUID  `db:"id_request"`
+	IdSourceAccount  int64      `db:"id_source_account"`
+	IdDestinyAccount int64      `db:"id_destiny_account"`
+	IsPending        bool       `db:"is_pending"`
+	CreatedAt        time.Time  `db:"created_at"`
+	ProcessedAt      *time.Time `db:"processed_at"`
+	IdPspPayment     *uuid.UUID `db:"id_psp_payment"`
+	PspResult        *string    `db:"psp_result"`
 }
 
 func (dc DbConfiguration) Dsn() string {

@@ -20,7 +20,6 @@ func InitializePostgresTestcontainer(dbConfiguration db.DbConfiguration, ctx con
 		"postgres",
 		postgres.WithOrderedInitScripts(
 			migrationPath("001_initial_migration.sql"),
-			migrationPath("002_create_accounts.sql"),
 		),
 		postgres.WithDatabase(dbConfiguration.Database),
 		postgres.WithUsername(dbConfiguration.Username),
