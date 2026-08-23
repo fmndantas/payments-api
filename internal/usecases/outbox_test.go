@@ -229,3 +229,27 @@ func TestProcessOutboxEvents4Workers(t *testing.T) {
 		assert.False(t, payment.IsPending, "payment.is_pending")
 	}
 }
+
+func TestGetNextTryAt(t *testing.T) {
+	cases := []struct {
+		idCase         string
+		attemptCount   int
+		expectedResult time.Duration
+	}{
+		{"attempt 0", 0, time.Duration(0) * time.Second},
+		{"attempt 1", 1, time.Duration(2) * time.Second},
+		{"attempt 2", 2, time.Duration(4) * time.Second},
+		{"attempt 3", 3, time.Duration(8) * time.Second},
+		{"attempt 4", 4, time.Duration(16) * time.Second},
+		{"attempt 5", 5, time.Duration(32) * time.Second},
+		{"attempt 6", 6, time.Duration(32) * time.Second},
+		{"attempt 7", 7, time.Duration(32) * time.Second},
+		{"attempt 100", 100, time.Duration(32) * time.Second},
+	}
+	for _, tt := range cases {
+		t.Run(tt.idCase, func(t *testing.T) {
+			result := usecases.GetNextTryAt(tt.attemptCount)
+			assert.Equal(t, tt.expectedResult, result)
+		})
+	}
+}

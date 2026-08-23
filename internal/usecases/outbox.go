@@ -234,6 +234,25 @@ func persistEventUpdate(
 	return markEventAsSuccessful(context, tree, pspResponse, event, lockToken, nowReference)
 }
 
+func GetNextTryAt(attemptCount int) time.Duration {
+	waitTime := time.Duration(0)
+	switch attemptCount {
+	case 0:
+		waitTime = time.Duration(0)
+	case 1:
+		waitTime = time.Duration(2)
+	case 2:
+		waitTime = time.Duration(4)
+	case 3:
+		waitTime = time.Duration(8)
+	case 4:
+		waitTime = time.Duration(16)
+	default:
+		waitTime = time.Duration(32)
+	}
+	return waitTime * time.Second
+}
+
 func markEventAsErrored(
 	context context.Context,
 	tree *dependencies.Tree,
@@ -249,8 +268,14 @@ func markEventAsErrored(
 
 	defer tx.Rollback(context)
 
-	// FIX: instead of time.Now(), add exponential_backoff to next_try_at
-	tag, txErr := tx.Exec(context, markOutboxEventAsErroredCommand, nowReference, eventError.Error(), event.IdOutbox, lockToken)
+	tag, txErr := tx.Exec(
+		context,
+		markOutboxEventAsErroredCommand,
+		nowReference.Add(GetNextTryAt(event.AttemptCount)),
+		eventError.Error(),
+		event.IdOutbox,
+		lockToken,
+	)
 
 	if txErr != nil {
 		return txErr
