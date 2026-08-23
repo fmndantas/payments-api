@@ -8,7 +8,7 @@ import (
 
 func TestGetIdRequestForPersistence(t *testing.T) {
 	cases := []struct {
-		idCase              string
+		idCase            string
 		originalIdRequest string
 		expectedResult    string
 		isOk              bool
