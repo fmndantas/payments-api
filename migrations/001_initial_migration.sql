@@ -10,27 +10,25 @@ create table if not exists payment(
     id_request uuid not null unique,
     id_source_account bigint not null references account (id_internal),
     id_destiny_account bigint not null references account (id_internal),
-    is_pending boolean not null,
     created_at timestamp with time zone not null,
-    processed_at timestamp with time zone,
     id_psp_payment uuid,
     psp_result jsonb
 );
 
 create table if not exists outbox(
     id bigint generated always as identity primary key, 
-    id_payment bigint not null references payment (id_internal),
-    is_pending boolean not null,
+    id_payment bigint not null unique references payment (id_internal),
+    status text not null default 'unprocessed',
     -- exponential backoff
     next_try_at timestamp with time zone not null,
     attempt_count int not null default 0,
-    last_error text,
     -- answers "may another worker claim this event now?"
     locked_until timestamp with time zone,
     -- answers "does the worker trying to update it still own the current claim?"
     lock_token uuid,
     created_at timestamp with time zone not null,
-    processed_at timestamp with time zone
+    last_processed_at timestamp with time zone,
+    last_result text
 );
 
 insert into account(id_external, user_name) values

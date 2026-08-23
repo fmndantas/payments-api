@@ -95,8 +95,8 @@ func resetDbState(context context.Context, tree *dependencies.Tree) error {
 	return nil
 }
 
-// Every payment will be processed without errors
-func TestProcessOutboxEventsSuccess(t *testing.T) {
+// status = "processed" at the end
+func TestProcessOutboxEventsToSuccess(t *testing.T) {
 	// arrange
 	ctx := context.Background()
 	require.NoError(t, resetDbState(ctx, tree))
@@ -124,7 +124,7 @@ func TestProcessOutboxEventsSuccess(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(outboxes))
 	for _, outbox := range outboxes {
-		assert.False(t, outbox.IsPending, "outbox.is_pending")
+		assert.Equal(t, usecases.SUCCESS, outbox.Status, "outbox.status")
 		assert.Equal(t, 1, outbox.AttemptCount, "outbox.attempt_count")
 		require.Nil(t, outbox.LockToken, "outbox.lock_token")
 		require.Nil(t, outbox.LockedUntil, "outbox.locked_until")
@@ -136,14 +136,13 @@ func TestProcessOutboxEventsSuccess(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(payments))
 	for _, payment := range payments {
-		assert.False(t, payment.IsPending, "payment.is_pending")
 		require.NotNil(t, payment.IdPspPayment, "payment.id_psp_payment")
 		assert.Equal(t, idPspPayment.String(), payment.IdPspPayment.String(), "payment.id_psp_payment")
-		require.NotNil(t, payment.ProcessedAt, "payment.processed_at")
 	}
 }
 
-func TestProcessOutboxEventsError(t *testing.T) {
+// "status = retry" at the end
+func TestProcessOutboxEventsToRetry(t *testing.T) {
 	// arrange
 	ctx := context.Background()
 	require.NoError(t, resetDbState(ctx, tree))
@@ -170,11 +169,11 @@ func TestProcessOutboxEventsError(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(outboxes))
 	for _, outbox := range outboxes {
-		assert.True(t, outbox.IsPending, "outbox.is_pending")
+		assert.Equal(t, usecases.RETRY, outbox.Status, "outbox.status")
 		assert.Equal(t, 1, outbox.AttemptCount, "outbox.attempt_count")
-		require.NotNil(t, outbox.LastError, "outbox.last_error")
-		assert.Contains(t, *outbox.LastError, "500", "outbox.last_error")
-		assert.Contains(t, *outbox.LastError, "the server couldn't process the request", "outbox.last_error")
+		require.NotNil(t, outbox.LastResult, "outbox.last_result")
+		assert.Contains(t, *outbox.LastResult, "500", "outbox.last_result")
+		assert.Contains(t, *outbox.LastResult, "the server couldn't process the request", "outbox.last_result")
 		assert.Nil(t, outbox.LockToken, "outbox.lock_token")
 		assert.Nil(t, outbox.LockedUntil, "outbox.locked_until")
 	}
@@ -217,16 +216,7 @@ func TestProcessOutboxEvents4Workers(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, N, len(outboxes))
 	for _, outbox := range outboxes {
-		assert.False(t, outbox.IsPending, "outbox.is_pending")
-	}
-	// check payment rows
-	rows, err = tree.DbPool.Query(ctx, "select * from payment")
-	require.NoError(t, err)
-	payments, err := pgx.CollectRows(rows, pgx.RowToStructByName[db.Payment])
-	require.NoError(t, err)
-	assert.Equal(t, N, len(payments))
-	for _, payment := range payments {
-		assert.False(t, payment.IsPending, "payment.is_pending")
+		assert.Equal(t, usecases.SUCCESS, outbox.Status, "outbox.status")
 	}
 }
 

@@ -17,7 +17,7 @@ import (
 var reserveOutboxEventsCommand = `
 with selected_outbox_events as (
 	select id from outbox
-	where is_pending = true
+	where status != any($5)
 	and locked_until is null
 	and lock_token is null 
 	and next_try_at < $1
@@ -42,33 +42,34 @@ join outbox on payment.id_internal = outbox.id_payment
 where outbox.lock_token = $1;
 `
 
-var markOutboxEventAsErroredCommand = `
+var markOutboxEventAsRetryCommand = `
 update outbox set 
 	next_try_at = $1,
+	status = $2,
 	attempt_count = attempt_count + 1, 
-	last_error = $2,
+	last_result = $3,
+	last_processed_at = $4,
 	locked_until = null,
 	lock_token = null
-where id = $3 and lock_token = $4;
+where id = $5 and lock_token = $6;
 `
 
-var markOutboxEventAsSuccessfulCommand = `
+var markOutboxEventAsSuccessCommand = `
 update outbox set
-	is_pending = false,	
-	processed_at = $1,
+	status = $1,
 	attempt_count = attempt_count + 1,
+	last_result = $2,
+	last_processed_at = $3,
 	locked_until = null,
 	lock_token = null
-where id = $2 and lock_token = $3
+where id = $4 and lock_token = $5
 `
 
 var markPaymentAsSuccessfulCommand = `
 update payment set
-	is_pending = false,
-	processed_at = $1,
-	id_psp_payment = $2,
-	psp_result = $3
-where id_internal = $4
+	id_psp_payment = $1,
+	psp_result = $2
+where id_internal = $3
 `
 
 type OutboxEvent struct {
@@ -84,6 +85,13 @@ type OutboxEventUpdate struct {
 }
 
 type SendEventToPspFn = func(context.Context, OutboxEvent) (PspHttpResponse, error)
+
+var (
+	UNPROCESSED = "unprocessed"
+	RETRY       = "retry"
+	ERRORED     = "errored"
+	SUCCESS     = "success"
+)
 
 func ProcessOutboxEvents(
 	context context.Context,
@@ -110,6 +118,7 @@ func ProcessOutboxEvents(
 		batchSize,
 		nowReference.Add(10*time.Minute),
 		lockToken,
+		[]string{ERRORED, SUCCESS},
 	)
 
 	if err != nil {
@@ -271,9 +280,11 @@ func markEventAsErrored(
 
 	tag, txErr := tx.Exec(
 		context,
-		markOutboxEventAsErroredCommand,
+		markOutboxEventAsRetryCommand,
 		nowReference.Add(GetNextTryAt(event.AttemptCount)),
+		RETRY,
 		eventError.Error(),
+		nowReference,
 		event.IdOutbox,
 		lockToken,
 	)
@@ -318,7 +329,15 @@ func markEventAsSuccessful(
 
 	defer tx.Rollback(context)
 
-	_, err := tx.Exec(context, markOutboxEventAsSuccessfulCommand, nowReference, event.IdOutbox, lockToken)
+	_, err := tx.Exec(
+		context,
+		markOutboxEventAsSuccessCommand,
+		SUCCESS,
+		pspHttpResponse.JsonBody,
+		nowReference,
+		event.IdOutbox,
+		lockToken,
+	)
 
 	if err != nil {
 		return err
@@ -334,7 +353,6 @@ func markEventAsSuccessful(
 	_, err = tx.Exec(
 		context,
 		markPaymentAsSuccessfulCommand,
-		time.Now(),
 		pspSuccessPayload.IdPspPayment,
 		pspHttpResponse.JsonBody,
 		event.IdInternalPayment,

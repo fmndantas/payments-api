@@ -72,10 +72,10 @@ func HandleCheckout(
 	now, idExternalPayment, idInternalPayment := time.Now(), uuid.New(), 0
 	err = tx.QueryRow(
 		context,
-		`insert into payment(id_external, id_request, id_source_account, id_destiny_account, is_pending, created_at)
-		values ($1, $2, $3, $4, $5, $6)
+		`insert into payment(id_external, id_request, id_source_account, id_destiny_account, created_at)
+		values ($1, $2, $3, $4, $5)
 		returning id_internal`,
-		idExternalPayment, idRequest, idInternalSourceAccount, idInternalDestinyAccount, true, now,
+		idExternalPayment, idRequest, idInternalSourceAccount, idInternalDestinyAccount, now,
 	).Scan(&idInternalPayment)
 
 	if err != nil {
@@ -84,9 +84,9 @@ func HandleCheckout(
 
 	_, err = tx.Exec(
 		context,
-		`insert into outbox (id_payment, is_pending, next_try_at, created_at)
+		`insert into outbox (id_payment, status, next_try_at, created_at)
 		values ($1, $2, $3, $4)`,
-		idInternalPayment, true, now, now,
+		idInternalPayment, UNPROCESSED, now, now,
 	)
 	defer tx.Rollback(context)
 
