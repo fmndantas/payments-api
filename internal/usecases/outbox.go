@@ -315,14 +315,8 @@ func markEventAsSuccessful(
 	)
 
 	if err != nil {
-		return nil
-	}
-
-	err = tx.Commit(context)
-
-	if err != nil {
 		return err
 	}
 
-	return nil
+	return tx.Commit(context)
 }
