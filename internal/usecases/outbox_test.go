@@ -179,6 +179,10 @@ func TestProcessOutboxEventsToRetry(t *testing.T) {
 	}
 }
 
+func TestProcessOutboxEventsToErrored(t *testing.T) {
+	panic("TODO")
+}
+
 func TestProcessOutboxEvents4Workers(t *testing.T) {
 	t.Skip("Expensive test")
 	// arrange
