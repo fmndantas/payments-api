@@ -126,6 +126,8 @@ func TestProcessOutboxEventsSuccess(t *testing.T) {
 	for _, outbox := range outboxes {
 		assert.False(t, outbox.IsPending, "outbox.is_pending")
 		assert.Equal(t, 1, outbox.AttemptCount, "outbox.attempt_count")
+		require.Nil(t, outbox.LockToken, "outbox.lock_token")
+		require.Nil(t, outbox.LockedUntil, "outbox.locked_until")
 	}
 	// check payment rows
 	rows, err = tree.DbPool.Query(ctx, "select * from payment")
@@ -173,6 +175,8 @@ func TestProcessOutboxEventsError(t *testing.T) {
 		require.NotNil(t, outbox.LastError, "outbox.last_error")
 		assert.Contains(t, *outbox.LastError, "500", "outbox.last_error")
 		assert.Contains(t, *outbox.LastError, "the server couldn't process the request", "outbox.last_error")
+		assert.Nil(t, outbox.LockToken, "outbox.lock_token")
+		assert.Nil(t, outbox.LockedUntil, "outbox.locked_until")
 	}
 }
 

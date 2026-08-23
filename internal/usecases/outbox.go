@@ -45,7 +45,9 @@ var markOutboxEventAsErroredCommand = `
 update outbox set 
 	next_try_at = $1,
 	attempt_count = attempt_count + 1, 
-	last_error = $2
+	last_error = $2,
+	locked_until = null,
+	lock_token = null
 where id = $3 and lock_token = $4;
 `
 
@@ -53,7 +55,9 @@ var markOutboxEventAsSuccessfulCommand = `
 update outbox set
 	is_pending = false,	
 	processed_at = $1,
-	attempt_count = attempt_count + 1
+	attempt_count = attempt_count + 1,
+	locked_until = null,
+	lock_token = null
 where id = $2 and lock_token = $3
 `
 
