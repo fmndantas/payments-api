@@ -35,7 +35,9 @@ func main() {
 
 	go func() {
 		for now := range time.Tick(5 * time.Second) {
-			ch <- usecases.ProcessOutboxEvents(context, tree, now, 10, uuid.New(), usecases.SendOutboxEventToPspFake)
+			ch <- usecases.ProcessOutboxEvents(
+				context, tree, now, 10, uuid.New(), usecases.SendOutboxEventToPspFake, usecases.EventIsErroredWithFiveAttempts,
+			)
 		}
 	}()
 

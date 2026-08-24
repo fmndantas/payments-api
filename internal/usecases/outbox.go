@@ -34,7 +34,6 @@ where outbox.id = selected_outbox_events.id;
 
 var getOutboxEventsByLockToken = `
 select outbox.id,
-	   payment.id_external, 
 	   outbox.id_payment,
 	   outbox.attempt_count
 from payment 
@@ -72,19 +71,15 @@ update payment set
 where id_internal = $3
 `
 
+// TODO: necessary?
 type OutboxEvent struct {
 	IdOutbox          int64
 	IdInternalPayment int64
-	IdExternalPayment uuid.UUID
 	AttemptCount      int
 }
 
-type OutboxEventUpdate struct {
-	Event     OutboxEvent
-	NextTryAt time.Time
-}
-
 type SendEventToPspFn = func(context.Context, OutboxEvent) (PspHttpResponse, error)
+type DecideNextErrorStatusFn = func(currentAttemptCount int) string
 
 var (
 	UNPROCESSED = "unprocessed"
@@ -99,7 +94,8 @@ func ProcessOutboxEvents(
 	nowReference time.Time,
 	batchSize int,
 	lockToken uuid.UUID,
-	sendEventToPspFn SendEventToPspFn,
+	sendEventToPsp SendEventToPspFn,
+	decideNextErrorStatus DecideNextErrorStatusFn,
 ) error {
 	log.Println("processing outbox events")
 
@@ -140,7 +136,7 @@ func ProcessOutboxEvents(
 	outboxEvents := make([]OutboxEvent, 0, batchSize)
 	for outboxEventsRows.Next() {
 		var event OutboxEvent
-		if err := outboxEventsRows.Scan(&event.IdOutbox, &event.IdExternalPayment, &event.IdInternalPayment, &event.AttemptCount); err != nil {
+		if err := outboxEventsRows.Scan(&event.IdOutbox, &event.IdInternalPayment, &event.AttemptCount); err != nil {
 			return fmt.Errorf("scan outbox event: %w", err)
 		}
 		outboxEvents = append(outboxEvents, event)
@@ -158,8 +154,10 @@ func ProcessOutboxEvents(
 	)
 
 	for _, outboxEvent := range outboxEvents {
-		pspResponse, pspError := sendEventToPspFn(context, outboxEvent)
-		if persistError := persistEventUpdate(context, tree, outboxEvent, pspResponse, pspError, lockToken, nowReference); persistError != nil {
+		pspResponse, pspError := sendEventToPsp(context, outboxEvent)
+		if persistError := persistEventUpdate(
+			context, tree, outboxEvent, pspResponse, pspError, lockToken, nowReference, decideNextErrorStatus,
+		); persistError != nil {
 			numberOfErrors++
 			aggregatedError = errors.Join(persistError, aggregatedError)
 		}
@@ -203,6 +201,13 @@ func SendOutboxEventToPspFake(context context.Context, _ OutboxEvent) (PspHttpRe
 	}
 }
 
+func EventIsErroredWithFiveAttempts(currentAttemptCount int) string {
+	if currentAttemptCount+1 >= 5 {
+		return ERRORED
+	}
+	return RETRY
+}
+
 func persistEventUpdate(
 	context context.Context,
 	tree *dependencies.Tree,
@@ -211,20 +216,21 @@ func persistEventUpdate(
 	pspError error,
 	lockToken uuid.UUID,
 	nowReference time.Time,
+	decideNextErrorStatus DecideNextErrorStatusFn,
 ) error {
 	if context.Err() != nil {
-		return markEventAsErrored(context, tree, event, context.Err(), lockToken, nowReference)
+		return markEventAsErrored(context, tree, event, context.Err(), lockToken, nowReference, decideNextErrorStatus)
 	}
 
 	if pspError != nil {
-		return markEventAsErrored(context, tree, event, pspError, lockToken, nowReference)
+		return markEventAsErrored(context, tree, event, pspError, lockToken, nowReference, decideNextErrorStatus)
 	}
 
 	if pspResponse.HttpStatusCode >= 400 {
 		var pspErrorPayload PspErrorPayload
 		unmarshalError := json.Unmarshal([]byte(pspResponse.JsonBody), &pspErrorPayload)
 		if unmarshalError != nil {
-			return markEventAsErrored(context, tree, event, unmarshalError, lockToken, nowReference)
+			return markEventAsErrored(context, tree, event, unmarshalError, lockToken, nowReference, decideNextErrorStatus)
 		}
 
 		return markEventAsErrored(
@@ -238,6 +244,7 @@ func persistEventUpdate(
 			),
 			lockToken,
 			nowReference,
+			decideNextErrorStatus,
 		)
 	}
 
@@ -270,6 +277,7 @@ func markEventAsErrored(
 	eventError error,
 	lockToken uuid.UUID,
 	nowReference time.Time,
+	decideNextErrorStatus DecideNextErrorStatusFn,
 ) error {
 	tx, txErr := tree.DbPool.Begin(context)
 	if txErr != nil {
@@ -282,7 +290,7 @@ func markEventAsErrored(
 		context,
 		markOutboxEventAsRetryCommand,
 		nowReference.Add(GetNextTryAt(event.AttemptCount)),
-		RETRY,
+		decideNextErrorStatus(event.AttemptCount),
 		eventError.Error(),
 		nowReference,
 		event.IdOutbox,

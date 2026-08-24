@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -58,7 +59,7 @@ func Checkout(t *dependencies.Tree, context *gin.Context) {
 	}
 
 	idExternalPayment, err := usecases.HandleCheckout(
-		t, context, idRequest, idSourceAccount, idDestinyAccount,
+		t, context, idRequest, idSourceAccount, idDestinyAccount, time.Now(),
 	)
 
 	if err != nil {

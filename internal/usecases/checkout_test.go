@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -47,7 +48,7 @@ func TestHappyPath(t *testing.T) {
 	}
 	// act
 	idPaymentExternal, err := usecases.HandleCheckout(
-		tree, ctx, uuid.New(), test.IdDestinyAccountAsUuid(), test.IdDestinyAccountAsUuid(),
+		tree, ctx, uuid.New(), test.IdDestinyAccountAsUuid(), test.IdDestinyAccountAsUuid(), time.Now(),
 	)
 	log.Printf("idPaymentExternal = %s", idPaymentExternal)
 	// assert

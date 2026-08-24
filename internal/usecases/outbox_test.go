@@ -74,6 +74,13 @@ func sendOutboxEventToPspFakeError() usecases.SendEventToPspFn {
 	}
 }
 
+func eventIsErroredWithTwoAttempts(currentAttemptCount int) string {
+	if currentAttemptCount+1 >= 2 {
+		return usecases.ERRORED
+	}
+	return usecases.RETRY
+}
+
 func resetDbState(context context.Context, tree *dependencies.Tree) error {
 	tx, err := tree.DbPool.Begin(context)
 	if err != nil {
@@ -95,10 +102,15 @@ func resetDbState(context context.Context, tree *dependencies.Tree) error {
 	return nil
 }
 
-// status = "processed" at the end
+// status = 'success'
 func TestProcessOutboxEventsToSuccess(t *testing.T) {
 	// arrange
-	ctx := context.Background()
+	var (
+		ctx          = context.Background()
+		lockToken    = uuid.New()
+		now          = time.Now()
+		idPspPayment = uuid.New()
+	)
 	require.NoError(t, resetDbState(ctx, tree))
 	_, err := usecases.HandleCheckout(
 		tree,
@@ -106,15 +118,13 @@ func TestProcessOutboxEventsToSuccess(t *testing.T) {
 		uuid.New(),
 		test.IdSourceAccountAsUuid(),
 		test.IdDestinyAccountAsUuid(),
+		now,
 	)
 	require.NoError(t, err)
-	var (
-		lockToken    = uuid.New()
-		now          = time.Now()
-		idPspPayment = uuid.New()
-	)
 	// act
-	err = usecases.ProcessOutboxEvents(ctx, tree, now, 1, lockToken, sendOutboxEventToPspFakeSuccess(idPspPayment))
+	err = usecases.ProcessOutboxEvents(
+		ctx, tree, now.Add(time.Minute), 1, lockToken, sendOutboxEventToPspFakeSuccess(idPspPayment), eventIsErroredWithTwoAttempts,
+	)
 	require.NoError(t, err)
 	// assert
 	// check outbox rows
@@ -141,10 +151,14 @@ func TestProcessOutboxEventsToSuccess(t *testing.T) {
 	}
 }
 
-// "status = retry" at the end
+// status = 'retry'
 func TestProcessOutboxEventsToRetry(t *testing.T) {
 	// arrange
-	ctx := context.Background()
+	var (
+		ctx       = context.Background()
+		lockToken = uuid.New()
+		now       = time.Now()
+	)
 	require.NoError(t, resetDbState(ctx, tree))
 	_, err := usecases.HandleCheckout(
 		tree,
@@ -152,14 +166,13 @@ func TestProcessOutboxEventsToRetry(t *testing.T) {
 		uuid.New(),
 		test.IdSourceAccountAsUuid(),
 		test.IdDestinyAccountAsUuid(),
+		now,
 	)
 	require.NoError(t, err)
-	var (
-		lockToken = uuid.New()
-		now       = time.Now()
-	)
 	// act
-	err = usecases.ProcessOutboxEvents(ctx, tree, now, 1, lockToken, sendOutboxEventToPspFakeError())
+	err = usecases.ProcessOutboxEvents(
+		ctx, tree, now.Add(time.Minute), 1, lockToken, sendOutboxEventToPspFakeError(), eventIsErroredWithTwoAttempts,
+	)
 	require.NoError(t, err)
 	// assert
 	// check outbox rows
@@ -179,19 +192,61 @@ func TestProcessOutboxEventsToRetry(t *testing.T) {
 	}
 }
 
+// status = 'errored'
 func TestProcessOutboxEventsToErrored(t *testing.T) {
-	panic("TODO")
+	// arrange
+	var (
+		ctx = context.Background()
+		now = time.Now()
+	)
+	require.NoError(t, resetDbState(ctx, tree))
+	_, err := usecases.HandleCheckout(
+		tree,
+		ctx,
+		uuid.New(),
+		test.IdSourceAccountAsUuid(),
+		test.IdDestinyAccountAsUuid(),
+		now,
+	)
+	require.NoError(t, err)
+	// act
+	firstSendError := usecases.ProcessOutboxEvents(
+		ctx, tree, now.Add(time.Minute), 1, uuid.New(), sendOutboxEventToPspFakeError(), eventIsErroredWithTwoAttempts,
+	)
+	require.NoError(t, firstSendError, "first send")
+
+	secondSendError := usecases.ProcessOutboxEvents(
+		ctx, tree, now.Add(time.Duration(2)*time.Minute), 1, uuid.New(), sendOutboxEventToPspFakeError(), eventIsErroredWithTwoAttempts,
+	)
+	require.NoError(t, secondSendError, "second send")
+	// assert
+	// check outbox rows
+	rows, err := tree.DbPool.Query(ctx, "select * from outbox")
+	require.NoError(t, err)
+	outboxes, err := pgx.CollectRows(rows, pgx.RowToStructByName[db.Outbox])
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(outboxes))
+	for _, outbox := range outboxes {
+		assert.Equal(t, usecases.ERRORED, outbox.Status, "outbox.status")
+		assert.Equal(t, 2, outbox.AttemptCount, "outbox.attempt_count")
+		require.NotNil(t, outbox.LastResult, "outbox.last_result")
+		assert.Contains(t, *outbox.LastResult, "500", "outbox.last_result")
+		assert.Contains(t, *outbox.LastResult, "the server couldn't process the request", "outbox.last_result")
+		assert.Nil(t, outbox.LockToken, "outbox.lock_token")
+		assert.Nil(t, outbox.LockedUntil, "outbox.locked_until")
+	}
 }
 
 func TestProcessOutboxEvents4Workers(t *testing.T) {
 	t.Skip("Expensive test")
 	// arrange
-	ctx := context.Background()
-	require.NoError(t, resetDbState(ctx, tree))
 	var (
 		N               = 10000
 		numberOfWorkers = 10
+		ctx             = context.Background()
+		now             = time.Now()
 	)
+	require.NoError(t, resetDbState(ctx, tree))
 	for range N {
 		_, err := usecases.HandleCheckout(
 			tree,
@@ -199,6 +254,7 @@ func TestProcessOutboxEvents4Workers(t *testing.T) {
 			uuid.New(),
 			test.IdSourceAccountAsUuid(),
 			test.IdDestinyAccountAsUuid(),
+			now,
 		)
 		if err != nil {
 			t.Fatalf("%s", err.Error())
@@ -208,7 +264,7 @@ func TestProcessOutboxEvents4Workers(t *testing.T) {
 	var wg sync.WaitGroup
 	for range numberOfWorkers {
 		wg.Go(func() {
-			usecases.ProcessOutboxEvents(ctx, tree, time.Now(), N/numberOfWorkers, uuid.New(), sendOutboxEventToPspFakeSuccess(uuid.New()))
+			usecases.ProcessOutboxEvents(ctx, tree, time.Now(), N/numberOfWorkers, uuid.New(), sendOutboxEventToPspFakeSuccess(uuid.New()), eventIsErroredWithTwoAttempts)
 		})
 	}
 	wg.Wait()
