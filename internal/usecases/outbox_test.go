@@ -57,7 +57,7 @@ func TestMain(m *testing.M) {
 }
 
 func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) usecases.SendEventToPspFn {
-	return func(context context.Context, _ usecases.OutboxEvent) (usecases.PspHttpResponse, error) {
+	return func(context context.Context, _ db.Outbox) (usecases.PspHttpResponse, error) {
 		return usecases.PspHttpResponse{
 			HttpStatusCode: 202,
 			JsonBody:       fmt.Sprintf("{ \"id_psp_payment\": \"%s\" }", idPspPayment.String()),
@@ -66,7 +66,7 @@ func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) usecases.SendEventT
 }
 
 func sendOutboxEventToPspFakeError() usecases.SendEventToPspFn {
-	return func(context context.Context, _ usecases.OutboxEvent) (usecases.PspHttpResponse, error) {
+	return func(context context.Context, _ db.Outbox) (usecases.PspHttpResponse, error) {
 		return usecases.PspHttpResponse{
 			HttpStatusCode: 500,
 			JsonBody:       "{ \"error\": \"the server couldn't process the request\" }",

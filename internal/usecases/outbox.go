@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
+	"github.com/fmndantas/payments/internal/db"
 	"github.com/fmndantas/payments/internal/dependencies"
 )
 
@@ -33,11 +35,8 @@ where outbox.id = selected_outbox_events.id;
 `
 
 var getOutboxEventsByLockToken = `
-select outbox.id,
-	   outbox.id_payment,
-	   outbox.attempt_count
-from payment 
-join outbox on payment.id_internal = outbox.id_payment
+select *
+from outbox
 where outbox.lock_token = $1;
 `
 
@@ -71,14 +70,7 @@ update payment set
 where id_internal = $3
 `
 
-// TODO: necessary?
-type OutboxEvent struct {
-	IdOutbox          int64
-	IdInternalPayment int64
-	AttemptCount      int
-}
-
-type SendEventToPspFn = func(context.Context, OutboxEvent) (PspHttpResponse, error)
+type SendEventToPspFn = func(context.Context, db.Outbox) (PspHttpResponse, error)
 type DecideNextErrorStatusFn = func(currentAttemptCount int) string
 
 var (
@@ -133,18 +125,10 @@ func ProcessOutboxEvents(
 		return err
 	}
 
-	outboxEvents := make([]OutboxEvent, 0, batchSize)
-	for outboxEventsRows.Next() {
-		var event OutboxEvent
-		if err := outboxEventsRows.Scan(&event.IdOutbox, &event.IdInternalPayment, &event.AttemptCount); err != nil {
-			return fmt.Errorf("scan outbox event: %w", err)
-		}
-		outboxEvents = append(outboxEvents, event)
-	}
+	outboxEvents, err := pgx.CollectRows(outboxEventsRows, pgx.RowToStructByName[db.Outbox])
 
-	outboxEventsRows.Close()
-	if err := outboxEventsRows.Err(); err != nil {
-		return fmt.Errorf("read outbox events: %w", err)
+	if err != nil {
+		return err
 	}
 
 	// TODO: paralellize
@@ -174,7 +158,7 @@ type PspHttpResponse struct {
 }
 
 // This function simulates the PSP response
-func SendOutboxEventToPspFake(context context.Context, _ OutboxEvent) (PspHttpResponse, error) {
+func SendOutboxEventToPspFake(context context.Context, _ db.Outbox) (PspHttpResponse, error) {
 	if context.Err() != nil {
 		return PspHttpResponse{}, context.Err()
 	}
@@ -211,7 +195,7 @@ func EventIsErroredWithFiveAttempts(currentAttemptCount int) string {
 func persistEventUpdate(
 	context context.Context,
 	tree *dependencies.Tree,
-	event OutboxEvent,
+	event db.Outbox,
 	pspResponse PspHttpResponse,
 	pspError error,
 	lockToken uuid.UUID,
@@ -273,7 +257,7 @@ func GetNextTryAt(attemptCount int) time.Duration {
 func markEventAsErrored(
 	context context.Context,
 	tree *dependencies.Tree,
-	event OutboxEvent,
+	event db.Outbox,
 	eventError error,
 	lockToken uuid.UUID,
 	nowReference time.Time,
@@ -293,7 +277,7 @@ func markEventAsErrored(
 		decideNextErrorStatus(event.AttemptCount),
 		eventError.Error(),
 		nowReference,
-		event.IdOutbox,
+		event.Id,
 		lockToken,
 	)
 
@@ -325,7 +309,7 @@ func markEventAsSuccessful(
 	context context.Context,
 	tree *dependencies.Tree,
 	pspHttpResponse PspHttpResponse,
-	event OutboxEvent,
+	event db.Outbox,
 	lockToken uuid.UUID,
 	nowReference time.Time,
 ) error {
@@ -343,7 +327,7 @@ func markEventAsSuccessful(
 		SUCCESS,
 		pspHttpResponse.JsonBody,
 		nowReference,
-		event.IdOutbox,
+		event.Id,
 		lockToken,
 	)
 
