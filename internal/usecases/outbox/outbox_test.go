@@ -238,6 +238,45 @@ func TestProcessOutboxEventsToErrored(t *testing.T) {
 	}
 }
 
+// final states are 'success' and 'errored'
+func TestProcessOutboxEventsDoesNotGetEventsWithFinalStates(t *testing.T) {
+	// arrange
+	var (
+		ctx = context.Background()
+		now = time.Now()
+	)
+	require.NoError(t, resetDbState(ctx, tree))
+	_, err := checkout.HandleCheckout(
+		tree,
+		ctx,
+		uuid.New(),
+		test.IdSourceAccountAsUuid(),
+		test.IdDestinyAccountAsUuid(),
+		now,
+	)
+	require.NoError(t, err)
+	firstSendError := outbox.ProcessOutboxEvents(
+		ctx, tree, now.Add(time.Minute), 1, uuid.New(), sendOutboxEventToPspFakeSuccess(uuid.New()), eventIsErroredWithTwoAttempts,
+	)
+	require.NoError(t, firstSendError, "first send")
+	// act
+	for i := range 10 {
+		otherSend := outbox.ProcessOutboxEvents(
+			ctx, tree, now.Add(time.Duration(i)*time.Minute), 1, uuid.New(), sendOutboxEventToPspFakeSuccess(uuid.New()), eventIsErroredWithTwoAttempts,
+		)
+		require.NoError(t, otherSend, fmt.Sprintf("other send %d", i))
+	}
+	// assert
+	rows, err := tree.DbPool.Query(ctx, "select * from outbox")
+	require.NoError(t, err)
+	outboxEvents, err := pgx.CollectRows(rows, pgx.RowToStructByName[db.Outbox])
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(outboxEvents))
+	outboxEvent := outboxEvents[0]
+	assert.Equal(t, outbox.SUCCESS, outboxEvent.Status, "outbox.status")
+	assert.Equal(t, 1, outboxEvent.AttemptCount, "outbox.attempt_count")
+}
+
 func TestProcessOutboxEvents4Workers(t *testing.T) {
 	t.Skip("Expensive test")
 	// arrange
