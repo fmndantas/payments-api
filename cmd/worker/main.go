@@ -34,7 +34,7 @@ func main() {
 	ch := make(chan error)
 
 	go func() {
-		for now := range time.Tick(5 * time.Second) {
+		for now := range time.Tick(30 * time.Second) {
 			ch <- outbox.ProcessOutboxEvents(
 				context, tree, now, 10, uuid.New(), outbox.SendOutboxEventToPspFake, outbox.EventIsErroredWithFiveAttempts,
 			)
