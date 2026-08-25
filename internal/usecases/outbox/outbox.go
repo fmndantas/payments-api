@@ -117,7 +117,7 @@ func ProcessOutboxEvents(
 		return err
 	}
 
-	log.Printf("outbox events were successfully reserved. Number of events: %d\n", tag.RowsAffected())
+	log.Printf("outbox events were successfully reserved. number of events: %d\n", tag.RowsAffected())
 
 	outboxEventsRows, err := tree.DbPool.Query(context, getOutboxEventsByLockToken, lockToken)
 
@@ -131,12 +131,12 @@ func ProcessOutboxEvents(
 		return err
 	}
 
-	// TODO: paralellize
 	var (
 		numberOfErrors  = 0
 		aggregatedError error
 	)
 
+	// TODO: paralellize
 	for _, outboxEvent := range outboxEvents {
 		pspResponse, pspError := sendEventToPsp(context, outboxEvent)
 		if persistError := persistEventUpdate(
