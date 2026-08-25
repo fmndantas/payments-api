@@ -10,7 +10,7 @@ import (
 
 	"github.com/fmndantas/payments/internal/db"
 	"github.com/fmndantas/payments/internal/dependencies"
-	"github.com/fmndantas/payments/internal/usecases"
+	"github.com/fmndantas/payments/internal/usecases/outbox"
 )
 
 // TODO: graceful shutdown?
@@ -35,8 +35,8 @@ func main() {
 
 	go func() {
 		for now := range time.Tick(5 * time.Second) {
-			ch <- usecases.ProcessOutboxEvents(
-				context, tree, now, 10, uuid.New(), usecases.SendOutboxEventToPspFake, usecases.EventIsErroredWithFiveAttempts,
+			ch <- outbox.ProcessOutboxEvents(
+				context, tree, now, 10, uuid.New(), outbox.SendOutboxEventToPspFake, outbox.EventIsErroredWithFiveAttempts,
 			)
 		}
 	}()

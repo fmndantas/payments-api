@@ -1,4 +1,4 @@
-package usecases_test
+package checkout_test
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 
 	"github.com/fmndantas/payments/internal/db"
 	"github.com/fmndantas/payments/internal/dependencies"
-	"github.com/fmndantas/payments/internal/usecases"
+	"github.com/fmndantas/payments/internal/usecases/checkout"
 	"github.com/fmndantas/payments/test"
 )
 
@@ -47,7 +47,7 @@ func TestHappyPath(t *testing.T) {
 		log.Fatalf("failed to initialize the dependencies tree: %s", err)
 	}
 	// act
-	idPaymentExternal, err := usecases.HandleCheckout(
+	idPaymentExternal, err := checkout.HandleCheckout(
 		tree, ctx, uuid.New(), test.IdDestinyAccountAsUuid(), test.IdDestinyAccountAsUuid(), time.Now(),
 	)
 	log.Printf("idPaymentExternal = %s", idPaymentExternal)

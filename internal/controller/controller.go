@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/fmndantas/payments/internal/dependencies"
-	"github.com/fmndantas/payments/internal/usecases"
+	"github.com/fmndantas/payments/internal/usecases/checkout"
 )
 
 type CheckoutRequest struct {
@@ -58,16 +58,16 @@ func Checkout(t *dependencies.Tree, context *gin.Context) {
 		return
 	}
 
-	idExternalPayment, err := usecases.HandleCheckout(
+	idExternalPayment, err := checkout.HandleCheckout(
 		t, context, idRequest, idSourceAccount, idDestinyAccount, time.Now(),
 	)
 
 	if err != nil {
 		var statusCode int
 		switch {
-		case errors.Is(err, usecases.ErrorCheckoutAtLeastOneAccountIsMissing):
+		case errors.Is(err, checkout.ErrorCheckoutAtLeastOneAccountIsMissing):
 			statusCode = http.StatusBadRequest
-		case errors.Is(err, usecases.ErrorCheckoutIdRequestAlreadyWasProcessed):
+		case errors.Is(err, checkout.ErrorCheckoutIdRequestAlreadyWasProcessed):
 			statusCode = http.StatusConflict
 		default:
 			statusCode = http.StatusInternalServerError

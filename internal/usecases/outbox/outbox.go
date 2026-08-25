@@ -1,4 +1,4 @@
-package usecases
+package outbox
 
 import (
 	"context"

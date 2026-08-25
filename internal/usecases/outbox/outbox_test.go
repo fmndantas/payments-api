@@ -1,4 +1,4 @@
-package usecases_test
+package outbox_test
 
 import (
 	"context"
@@ -16,7 +16,8 @@ import (
 
 	"github.com/fmndantas/payments/internal/db"
 	"github.com/fmndantas/payments/internal/dependencies"
-	"github.com/fmndantas/payments/internal/usecases"
+	"github.com/fmndantas/payments/internal/usecases/checkout"
+	"github.com/fmndantas/payments/internal/usecases/outbox"
 	"github.com/fmndantas/payments/test"
 )
 
@@ -56,18 +57,18 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) usecases.SendEventToPspFn {
-	return func(context context.Context, _ db.Outbox) (usecases.PspHttpResponse, error) {
-		return usecases.PspHttpResponse{
+func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) outbox.SendEventToPspFn {
+	return func(context context.Context, _ db.Outbox) (outbox.PspHttpResponse, error) {
+		return outbox.PspHttpResponse{
 			HttpStatusCode: 202,
 			JsonBody:       fmt.Sprintf("{ \"id_psp_payment\": \"%s\" }", idPspPayment.String()),
 		}, nil
 	}
 }
 
-func sendOutboxEventToPspFakeError() usecases.SendEventToPspFn {
-	return func(context context.Context, _ db.Outbox) (usecases.PspHttpResponse, error) {
-		return usecases.PspHttpResponse{
+func sendOutboxEventToPspFakeError() outbox.SendEventToPspFn {
+	return func(context context.Context, _ db.Outbox) (outbox.PspHttpResponse, error) {
+		return outbox.PspHttpResponse{
 			HttpStatusCode: 500,
 			JsonBody:       "{ \"error\": \"the server couldn't process the request\" }",
 		}, nil
@@ -76,9 +77,9 @@ func sendOutboxEventToPspFakeError() usecases.SendEventToPspFn {
 
 func eventIsErroredWithTwoAttempts(currentAttemptCount int) string {
 	if currentAttemptCount+1 >= 2 {
-		return usecases.ERRORED
+		return outbox.ERRORED
 	}
-	return usecases.RETRY
+	return outbox.RETRY
 }
 
 func resetDbState(context context.Context, tree *dependencies.Tree) error {
@@ -112,7 +113,7 @@ func TestProcessOutboxEventsToSuccess(t *testing.T) {
 		idPspPayment = uuid.New()
 	)
 	require.NoError(t, resetDbState(ctx, tree))
-	_, err := usecases.HandleCheckout(
+	_, err := checkout.HandleCheckout(
 		tree,
 		ctx,
 		uuid.New(),
@@ -122,7 +123,7 @@ func TestProcessOutboxEventsToSuccess(t *testing.T) {
 	)
 	require.NoError(t, err)
 	// act
-	err = usecases.ProcessOutboxEvents(
+	err = outbox.ProcessOutboxEvents(
 		ctx, tree, now.Add(time.Minute), 1, lockToken, sendOutboxEventToPspFakeSuccess(idPspPayment), eventIsErroredWithTwoAttempts,
 	)
 	require.NoError(t, err)
@@ -130,14 +131,14 @@ func TestProcessOutboxEventsToSuccess(t *testing.T) {
 	// check outbox rows
 	rows, err := tree.DbPool.Query(ctx, "select * from outbox")
 	require.NoError(t, err)
-	outboxes, err := pgx.CollectRows(rows, pgx.RowToStructByName[db.Outbox])
+	outboxEvents, err := pgx.CollectRows(rows, pgx.RowToStructByName[db.Outbox])
 	require.NoError(t, err)
-	assert.Equal(t, 1, len(outboxes))
-	for _, outbox := range outboxes {
-		assert.Equal(t, usecases.SUCCESS, outbox.Status, "outbox.status")
-		assert.Equal(t, 1, outbox.AttemptCount, "outbox.attempt_count")
-		require.Nil(t, outbox.LockToken, "outbox.lock_token")
-		require.Nil(t, outbox.LockedUntil, "outbox.locked_until")
+	assert.Equal(t, 1, len(outboxEvents))
+	for _, outboxEvent := range outboxEvents {
+		assert.Equal(t, outbox.SUCCESS, outboxEvent.Status, "outbox.status")
+		assert.Equal(t, 1, outboxEvent.AttemptCount, "outbox.attempt_count")
+		require.Nil(t, outboxEvent.LockToken, "outbox.lock_token")
+		require.Nil(t, outboxEvent.LockedUntil, "outbox.locked_until")
 	}
 	// check payment rows
 	rows, err = tree.DbPool.Query(ctx, "select * from payment")
@@ -160,7 +161,7 @@ func TestProcessOutboxEventsToRetry(t *testing.T) {
 		now       = time.Now()
 	)
 	require.NoError(t, resetDbState(ctx, tree))
-	_, err := usecases.HandleCheckout(
+	_, err := checkout.HandleCheckout(
 		tree,
 		ctx,
 		uuid.New(),
@@ -170,7 +171,7 @@ func TestProcessOutboxEventsToRetry(t *testing.T) {
 	)
 	require.NoError(t, err)
 	// act
-	err = usecases.ProcessOutboxEvents(
+	err = outbox.ProcessOutboxEvents(
 		ctx, tree, now.Add(time.Minute), 1, lockToken, sendOutboxEventToPspFakeError(), eventIsErroredWithTwoAttempts,
 	)
 	require.NoError(t, err)
@@ -178,17 +179,17 @@ func TestProcessOutboxEventsToRetry(t *testing.T) {
 	// check outbox rows
 	rows, err := tree.DbPool.Query(ctx, "select * from outbox")
 	require.NoError(t, err)
-	outboxes, err := pgx.CollectRows(rows, pgx.RowToStructByName[db.Outbox])
+	outboxEvents, err := pgx.CollectRows(rows, pgx.RowToStructByName[db.Outbox])
 	require.NoError(t, err)
-	assert.Equal(t, 1, len(outboxes))
-	for _, outbox := range outboxes {
-		assert.Equal(t, usecases.RETRY, outbox.Status, "outbox.status")
-		assert.Equal(t, 1, outbox.AttemptCount, "outbox.attempt_count")
-		require.NotNil(t, outbox.LastResult, "outbox.last_result")
-		assert.Contains(t, *outbox.LastResult, "500", "outbox.last_result")
-		assert.Contains(t, *outbox.LastResult, "the server couldn't process the request", "outbox.last_result")
-		assert.Nil(t, outbox.LockToken, "outbox.lock_token")
-		assert.Nil(t, outbox.LockedUntil, "outbox.locked_until")
+	assert.Equal(t, 1, len(outboxEvents))
+	for _, outboxEvent := range outboxEvents {
+		assert.Equal(t, outbox.RETRY, outboxEvent.Status, "outbox.status")
+		assert.Equal(t, 1, outboxEvent.AttemptCount, "outbox.attempt_count")
+		require.NotNil(t, outboxEvent.LastResult, "outbox.last_result")
+		assert.Contains(t, *outboxEvent.LastResult, "500", "outbox.last_result")
+		assert.Contains(t, *outboxEvent.LastResult, "the server couldn't process the request", "outbox.last_result")
+		assert.Nil(t, outboxEvent.LockToken, "outbox.lock_token")
+		assert.Nil(t, outboxEvent.LockedUntil, "outbox.locked_until")
 	}
 }
 
@@ -200,7 +201,7 @@ func TestProcessOutboxEventsToErrored(t *testing.T) {
 		now = time.Now()
 	)
 	require.NoError(t, resetDbState(ctx, tree))
-	_, err := usecases.HandleCheckout(
+	_, err := checkout.HandleCheckout(
 		tree,
 		ctx,
 		uuid.New(),
@@ -210,12 +211,12 @@ func TestProcessOutboxEventsToErrored(t *testing.T) {
 	)
 	require.NoError(t, err)
 	// act
-	firstSendError := usecases.ProcessOutboxEvents(
+	firstSendError := outbox.ProcessOutboxEvents(
 		ctx, tree, now.Add(time.Minute), 1, uuid.New(), sendOutboxEventToPspFakeError(), eventIsErroredWithTwoAttempts,
 	)
 	require.NoError(t, firstSendError, "first send")
 
-	secondSendError := usecases.ProcessOutboxEvents(
+	secondSendError := outbox.ProcessOutboxEvents(
 		ctx, tree, now.Add(time.Duration(2)*time.Minute), 1, uuid.New(), sendOutboxEventToPspFakeError(), eventIsErroredWithTwoAttempts,
 	)
 	require.NoError(t, secondSendError, "second send")
@@ -223,17 +224,17 @@ func TestProcessOutboxEventsToErrored(t *testing.T) {
 	// check outbox rows
 	rows, err := tree.DbPool.Query(ctx, "select * from outbox")
 	require.NoError(t, err)
-	outboxes, err := pgx.CollectRows(rows, pgx.RowToStructByName[db.Outbox])
+	outboxEvents, err := pgx.CollectRows(rows, pgx.RowToStructByName[db.Outbox])
 	require.NoError(t, err)
-	assert.Equal(t, 1, len(outboxes))
-	for _, outbox := range outboxes {
-		assert.Equal(t, usecases.ERRORED, outbox.Status, "outbox.status")
-		assert.Equal(t, 2, outbox.AttemptCount, "outbox.attempt_count")
-		require.NotNil(t, outbox.LastResult, "outbox.last_result")
-		assert.Contains(t, *outbox.LastResult, "500", "outbox.last_result")
-		assert.Contains(t, *outbox.LastResult, "the server couldn't process the request", "outbox.last_result")
-		assert.Nil(t, outbox.LockToken, "outbox.lock_token")
-		assert.Nil(t, outbox.LockedUntil, "outbox.locked_until")
+	assert.Equal(t, 1, len(outboxEvents))
+	for _, outboxEvent := range outboxEvents {
+		assert.Equal(t, outbox.ERRORED, outboxEvent.Status, "outbox.status")
+		assert.Equal(t, 2, outboxEvent.AttemptCount, "outbox.attempt_count")
+		require.NotNil(t, outboxEvent.LastResult, "outbox.last_result")
+		assert.Contains(t, *outboxEvent.LastResult, "500", "outbox.last_result")
+		assert.Contains(t, *outboxEvent.LastResult, "the server couldn't process the request", "outbox.last_result")
+		assert.Nil(t, outboxEvent.LockToken, "outbox.lock_token")
+		assert.Nil(t, outboxEvent.LockedUntil, "outbox.locked_until")
 	}
 }
 
@@ -248,7 +249,7 @@ func TestProcessOutboxEvents4Workers(t *testing.T) {
 	)
 	require.NoError(t, resetDbState(ctx, tree))
 	for range N {
-		_, err := usecases.HandleCheckout(
+		_, err := checkout.HandleCheckout(
 			tree,
 			ctx,
 			uuid.New(),
@@ -264,7 +265,7 @@ func TestProcessOutboxEvents4Workers(t *testing.T) {
 	var wg sync.WaitGroup
 	for range numberOfWorkers {
 		wg.Go(func() {
-			usecases.ProcessOutboxEvents(ctx, tree, time.Now(), N/numberOfWorkers, uuid.New(), sendOutboxEventToPspFakeSuccess(uuid.New()), eventIsErroredWithTwoAttempts)
+			outbox.ProcessOutboxEvents(ctx, tree, time.Now(), N/numberOfWorkers, uuid.New(), sendOutboxEventToPspFakeSuccess(uuid.New()), eventIsErroredWithTwoAttempts)
 		})
 	}
 	wg.Wait()
@@ -272,11 +273,11 @@ func TestProcessOutboxEvents4Workers(t *testing.T) {
 	// check outbox rows
 	rows, err := tree.DbPool.Query(ctx, "select * from outbox order by id")
 	require.NoError(t, err)
-	outboxes, err := pgx.CollectRows(rows, pgx.RowToStructByName[db.Outbox])
+	outboxEvents, err := pgx.CollectRows(rows, pgx.RowToStructByName[db.Outbox])
 	require.NoError(t, err)
-	assert.Equal(t, N, len(outboxes))
-	for _, outbox := range outboxes {
-		assert.Equal(t, usecases.SUCCESS, outbox.Status, "outbox.status")
+	assert.Equal(t, N, len(outboxEvents))
+	for _, outboxEvent := range outboxEvents {
+		assert.Equal(t, outbox.SUCCESS, outboxEvent.Status, "outbox.status")
 	}
 }
 
@@ -298,7 +299,7 @@ func TestGetNextTryAt(t *testing.T) {
 	}
 	for _, tt := range cases {
 		t.Run(tt.idCase, func(t *testing.T) {
-			result := usecases.GetNextTryAt(tt.attemptCount)
+			result := outbox.GetNextTryAt(tt.attemptCount)
 			assert.Equal(t, tt.expectedResult, result)
 		})
 	}

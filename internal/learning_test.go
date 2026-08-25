@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/fmndantas/payments/internal/usecases"
+	"github.com/fmndantas/payments/internal/usecases/outbox"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -17,14 +17,14 @@ func TestNilUuid(t *testing.T) {
 }
 
 func TestUnmarshallingOk(t *testing.T) {
-	var payload usecases.PspSuccessPayload
+	var payload outbox.PspSuccessPayload
 	payloadString := fmt.Sprintf("{ \"id_psp_payment\": \"%s\" }", uuid.New().String())
 	err := json.Unmarshal([]byte(payloadString), &payload)
 	require.NoError(t, err)
 }
 
 func TestUnmarshallingError(t *testing.T) {
-	var payload usecases.PspSuccessPayload
+	var payload outbox.PspSuccessPayload
 	payloadString := "foo"
 	err := json.Unmarshal([]byte(payloadString), &payload)
 	require.Error(t, err)
