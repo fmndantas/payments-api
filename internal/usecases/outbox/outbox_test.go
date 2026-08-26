@@ -66,13 +66,11 @@ func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) outbox.SendEventToP
 	}
 }
 
-func sendOutboxEventToPspFakeError() outbox.SendEventToPspFn {
-	return func(context context.Context, _ db.Outbox) (outbox.PspHttpResponse, error) {
-		return outbox.PspHttpResponse{
-			HttpStatusCode: 500,
-			JsonBody:       "{ \"error\": \"the server couldn't process the request\" }",
-		}, nil
-	}
+func sendOutboxEventToPspFakeServerError(context context.Context, _ db.Outbox) (outbox.PspHttpResponse, error) {
+	return outbox.PspHttpResponse{
+		HttpStatusCode: 500,
+		JsonBody:       "{ \"error\": \"the server couldn't process the request\" }",
+	}, nil
 }
 
 func eventIsErroredWithTwoAttempts(currentAttemptCount int) string {
@@ -80,6 +78,10 @@ func eventIsErroredWithTwoAttempts(currentAttemptCount int) string {
 		return outbox.ERRORED
 	}
 	return outbox.RETRY
+}
+
+func eventIsErroredWithOneAttempt(currentAttemptCount int) string {
+	return outbox.ERRORED
 }
 
 func resetDbState(context context.Context, tree *dependencies.Tree) error {
@@ -101,6 +103,30 @@ func resetDbState(context context.Context, tree *dependencies.Tree) error {
 	}
 
 	return nil
+}
+
+func TestGetNextTryAt(t *testing.T) {
+	cases := []struct {
+		idCase         string
+		attemptCount   int
+		expectedResult time.Duration
+	}{
+		{"attempt 0", 0, time.Duration(0)},
+		{"attempt 1", 1, time.Duration(2)},
+		{"attempt 2", 2, time.Duration(4)},
+		{"attempt 3", 3, time.Duration(8)},
+		{"attempt 4", 4, time.Duration(16)},
+		{"attempt 5", 5, time.Duration(32)},
+		{"attempt 6", 6, time.Duration(32)},
+		{"attempt 7", 7, time.Duration(32)},
+		{"attempt 100", 100, time.Duration(32)},
+	}
+	for _, tt := range cases {
+		t.Run(tt.idCase, func(t *testing.T) {
+			result := outbox.GetNextTryAt(tt.attemptCount)
+			assert.Equal(t, tt.expectedResult*time.Second, result)
+		})
+	}
 }
 
 // status = 'success'
@@ -172,7 +198,7 @@ func TestProcessOutboxEventsToRetry(t *testing.T) {
 	require.NoError(t, err)
 	// act
 	err = outbox.ProcessOutboxEvents(
-		ctx, tree, now.Add(time.Minute), 1, lockToken, sendOutboxEventToPspFakeError(), eventIsErroredWithTwoAttempts,
+		ctx, tree, now.Add(time.Minute), 1, lockToken, sendOutboxEventToPspFakeServerError, eventIsErroredWithTwoAttempts,
 	)
 	require.NoError(t, err)
 	// assert
@@ -212,12 +238,12 @@ func TestProcessOutboxEventsToErrored(t *testing.T) {
 	require.NoError(t, err)
 	// act
 	firstSendError := outbox.ProcessOutboxEvents(
-		ctx, tree, now.Add(time.Minute), 1, uuid.New(), sendOutboxEventToPspFakeError(), eventIsErroredWithTwoAttempts,
+		ctx, tree, now.Add(time.Minute), 1, uuid.New(), sendOutboxEventToPspFakeServerError, eventIsErroredWithTwoAttempts,
 	)
 	require.NoError(t, firstSendError, "first send")
 
 	secondSendError := outbox.ProcessOutboxEvents(
-		ctx, tree, now.Add(time.Duration(2)*time.Minute), 1, uuid.New(), sendOutboxEventToPspFakeError(), eventIsErroredWithTwoAttempts,
+		ctx, tree, now.Add(time.Duration(2)*time.Minute), 1, uuid.New(), sendOutboxEventToPspFakeServerError, eventIsErroredWithTwoAttempts,
 	)
 	require.NoError(t, secondSendError, "second send")
 	// assert
@@ -317,29 +343,5 @@ func TestProcessOutboxEvents4Workers(t *testing.T) {
 	assert.Equal(t, N, len(outboxEvents))
 	for _, outboxEvent := range outboxEvents {
 		assert.Equal(t, outbox.SUCCESS, outboxEvent.Status, "outbox.status")
-	}
-}
-
-func TestGetNextTryAt(t *testing.T) {
-	cases := []struct {
-		idCase         string
-		attemptCount   int
-		expectedResult time.Duration
-	}{
-		{"attempt 0", 0, time.Duration(0)},
-		{"attempt 1", 1, time.Duration(2)},
-		{"attempt 2", 2, time.Duration(4)},
-		{"attempt 3", 3, time.Duration(8)},
-		{"attempt 4", 4, time.Duration(16)},
-		{"attempt 5", 5, time.Duration(32)},
-		{"attempt 6", 6, time.Duration(32)},
-		{"attempt 7", 7, time.Duration(32)},
-		{"attempt 100", 100, time.Duration(32)},
-	}
-	for _, tt := range cases {
-		t.Run(tt.idCase, func(t *testing.T) {
-			result := outbox.GetNextTryAt(tt.attemptCount)
-			assert.Equal(t, tt.expectedResult*time.Second, result)
-		})
 	}
 }
