@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math/rand/v2"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/fmndantas/payments/internal/db"
 	"github.com/fmndantas/payments/internal/dependencies"
+	"github.com/fmndantas/payments/internal/psp"
 )
 
 var reserveOutboxEventsCommand = `
@@ -70,7 +70,6 @@ update payment set
 where id_internal = $3
 `
 
-type SendEventToPspFn = func(context.Context, db.Outbox) (PspHttpResponse, error)
 type DecideNextErrorStatusFn = func(currentAttemptCount int) string
 
 var (
@@ -86,7 +85,7 @@ func ProcessOutboxEvents(
 	nowReference time.Time,
 	batchSize int,
 	lockToken uuid.UUID,
-	sendEventToPsp SendEventToPspFn,
+	sendEventToPsp psp.SendEventToPspFn,
 	decideNextErrorStatus DecideNextErrorStatusFn,
 ) error {
 	log.Println("processing outbox events")
@@ -138,9 +137,9 @@ func ProcessOutboxEvents(
 
 	// TODO: paralellize
 	for _, outboxEvent := range outboxEvents {
-		pspResponse, pspError := sendEventToPsp(context, outboxEvent)
+		pspOutput := sendEventToPsp(psp.PspInput{Context: context, Outbox: outboxEvent})
 		if persistError := persistEventUpdate(
-			context, tree, outboxEvent, pspResponse, pspError, lockToken, nowReference, decideNextErrorStatus,
+			context, tree, outboxEvent, pspOutput.Http, pspOutput.Error, lockToken, nowReference, decideNextErrorStatus,
 		); persistError != nil {
 			numberOfErrors++
 			aggregatedError = errors.Join(persistError, aggregatedError)
@@ -150,39 +149,6 @@ func ProcessOutboxEvents(
 	log.Printf("processed %d outbox events. number of errors: %d\n", tag.RowsAffected(), numberOfErrors)
 
 	return aggregatedError
-}
-
-type PspHttpResponse struct {
-	HttpStatusCode int
-	JsonBody       string
-}
-
-// This function simulates the PSP response
-func SendOutboxEventToPspFake(context context.Context, _ db.Outbox) (PspHttpResponse, error) {
-	if context.Err() != nil {
-		return PspHttpResponse{}, context.Err()
-	}
-
-	randomHttpStatusCode := rand.IntN(100)
-
-	if randomHttpStatusCode > 75 {
-		return PspHttpResponse{
-			HttpStatusCode: 500,
-			JsonBody:       "{ \"error\": \"the server couldn't process the request\" }",
-		}, nil
-	} else if randomHttpStatusCode > 50 {
-		return PspHttpResponse{
-			HttpStatusCode: 429,
-			JsonBody:       "{ \"error\": \"the server is busy\" }",
-		}, nil
-	} else if randomHttpStatusCode > 25 {
-		return PspHttpResponse{}, errors.New("this is an unexpected error")
-	} else {
-		return PspHttpResponse{
-			HttpStatusCode: 202,
-			JsonBody:       fmt.Sprintf("{ \"id_psp_payment\": \"%s\" }", uuid.New().String()),
-		}, nil
-	}
 }
 
 func EventIsErroredWithFiveAttempts(currentAttemptCount int) string {
@@ -196,7 +162,7 @@ func persistEventUpdate(
 	context context.Context,
 	tree *dependencies.Tree,
 	event db.Outbox,
-	pspResponse PspHttpResponse,
+	pspResponse psp.PspHttpResponse,
 	pspError error,
 	lockToken uuid.UUID,
 	nowReference time.Time,
@@ -308,7 +274,7 @@ type PspErrorPayload struct {
 func markEventAsSuccessful(
 	context context.Context,
 	tree *dependencies.Tree,
-	pspHttpResponse PspHttpResponse,
+	pspHttpResponse psp.PspHttpResponse,
 	event db.Outbox,
 	lockToken uuid.UUID,
 	nowReference time.Time,

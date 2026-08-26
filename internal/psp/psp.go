@@ -1,0 +1,66 @@
+package psp
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/google/uuid"
+	"math/rand/v2"
+
+	"github.com/fmndantas/payments/internal/db"
+	"github.com/fmndantas/payments/internal/resilience"
+)
+
+type PspInput struct {
+	Context context.Context
+	Outbox  db.Outbox
+}
+
+type PspHttpResponse struct {
+	HttpStatusCode int
+	JsonBody       string
+}
+
+type PspOutput struct {
+	Http  PspHttpResponse
+	Error error
+}
+
+type SendEventToPspFn = resilience.DoRequest[PspInput, PspOutput]
+
+// This function simulates the PSP response
+func SendOutboxEventToPspFake(pspInput PspInput) PspOutput {
+	if pspInput.Context.Err() != nil {
+		return PspOutput{Error: pspInput.Context.Err()}
+	}
+
+	randomHttpStatusCode := rand.IntN(100)
+
+	if randomHttpStatusCode > 75 {
+		return PspOutput{
+			Http: PspHttpResponse{
+				HttpStatusCode: 500,
+				JsonBody:       "{ \"error\": \"the server couldn't process the request\" }",
+			},
+		}
+	} else if randomHttpStatusCode > 50 {
+		return PspOutput{
+			Http: PspHttpResponse{
+				HttpStatusCode: 429,
+				JsonBody:       "{ \"error\": \"the server is busy\" }",
+			},
+		}
+	} else if randomHttpStatusCode > 25 {
+		return PspOutput{
+			Error: errors.New("this is an unexpected error"),
+		}
+	} else {
+		return PspOutput{
+			Http: PspHttpResponse{
+				HttpStatusCode: 202,
+				JsonBody:       fmt.Sprintf("{ \"id_psp_payment\": \"%s\" }", uuid.New().String()),
+			},
+		}
+	}
+}

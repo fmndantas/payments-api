@@ -16,6 +16,7 @@ import (
 
 	"github.com/fmndantas/payments/internal/db"
 	"github.com/fmndantas/payments/internal/dependencies"
+	"github.com/fmndantas/payments/internal/psp"
 	"github.com/fmndantas/payments/internal/usecases/checkout"
 	"github.com/fmndantas/payments/internal/usecases/outbox"
 	"github.com/fmndantas/payments/test"
@@ -57,20 +58,20 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) outbox.SendEventToPspFn {
-	return func(context context.Context, _ db.Outbox) (outbox.PspHttpResponse, error) {
-		return outbox.PspHttpResponse{
+func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) psp.SendEventToPspFn {
+	return func(_ psp.PspInput) psp.PspOutput {
+		return psp.PspOutput{Http: psp.PspHttpResponse{
 			HttpStatusCode: 202,
 			JsonBody:       fmt.Sprintf("{ \"id_psp_payment\": \"%s\" }", idPspPayment.String()),
-		}, nil
+		}}
 	}
 }
 
-func sendOutboxEventToPspFakeServerError(context context.Context, _ db.Outbox) (outbox.PspHttpResponse, error) {
-	return outbox.PspHttpResponse{
+func sendOutboxEventToPspFakeServerError(_ psp.PspInput) psp.PspOutput {
+	return psp.PspOutput{Http: psp.PspHttpResponse{
 		HttpStatusCode: 500,
 		JsonBody:       "{ \"error\": \"the server couldn't process the request\" }",
-	}, nil
+	}}
 }
 
 func eventIsErroredWithTwoAttempts(currentAttemptCount int) string {
