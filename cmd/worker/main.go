@@ -10,6 +10,8 @@ import (
 
 	"github.com/fmndantas/payments/internal/db"
 	"github.com/fmndantas/payments/internal/dependencies"
+	"github.com/fmndantas/payments/internal/psp"
+	"github.com/fmndantas/payments/internal/resilience"
 	"github.com/fmndantas/payments/internal/usecases/outbox"
 )
 
@@ -33,10 +35,22 @@ func main() {
 
 	ch := make(chan error)
 
+	pspWithCircuitBreaker := resilience.CreateCircuitBreaker(
+		20,
+		psp.SendOutboxEventToPspFake,
+		func(_ psp.PspOutput) bool { return false },
+	)
+
 	go func() {
-		for now := range time.Tick(30 * time.Second) {
+		for now := range time.Tick(5 * time.Second) {
 			ch <- outbox.ProcessOutboxEvents(
-				context, tree, now, 10, uuid.New(), outbox.SendOutboxEventToPspFake, outbox.EventIsErroredWithFiveAttempts,
+				context,
+				tree,
+				now,
+				10,
+				uuid.New(),
+				pspWithCircuitBreaker,
+				outbox.EventIsErroredWithFiveAttempts,
 			)
 		}
 	}()

@@ -17,6 +17,7 @@ import (
 	"github.com/fmndantas/payments/internal/db"
 	"github.com/fmndantas/payments/internal/dependencies"
 	"github.com/fmndantas/payments/internal/psp"
+	"github.com/fmndantas/payments/internal/resilience"
 	"github.com/fmndantas/payments/internal/usecases/checkout"
 	"github.com/fmndantas/payments/internal/usecases/outbox"
 	"github.com/fmndantas/payments/test"
@@ -58,20 +59,24 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) psp.SendEventToPspFn {
-	return func(_ psp.PspInput) psp.PspOutput {
+func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) resilience.CircuitBreakerHandler[psp.PspInput, psp.PspOutput] {
+	doRequest := func(_ psp.PspInput) psp.PspOutput {
 		return psp.PspOutput{Http: psp.PspHttpResponse{
 			HttpStatusCode: 202,
 			JsonBody:       fmt.Sprintf("{ \"id_psp_payment\": \"%s\" }", idPspPayment.String()),
 		}}
 	}
+	return resilience.CreateCircuitBreaker(1000, doRequest, func(_ psp.PspOutput) bool { return false })
 }
 
-func sendOutboxEventToPspFakeServerError(_ psp.PspInput) psp.PspOutput {
-	return psp.PspOutput{Http: psp.PspHttpResponse{
-		HttpStatusCode: 500,
-		JsonBody:       "{ \"error\": \"the server couldn't process the request\" }",
-	}}
+func sendOutboxEventToPspFakeServerError() resilience.CircuitBreakerHandler[psp.PspInput, psp.PspOutput] {
+	doRequest := func(_ psp.PspInput) psp.PspOutput {
+		return psp.PspOutput{Http: psp.PspHttpResponse{
+			HttpStatusCode: 500,
+			JsonBody:       "{ \"error\": \"the server couldn't process the request\" }",
+		}}
+	}
+	return resilience.CreateCircuitBreaker(1000, doRequest, func(_ psp.PspOutput) bool { return false })
 }
 
 func eventIsErroredWithTwoAttempts(currentAttemptCount int) string {
@@ -151,7 +156,13 @@ func TestProcessOutboxEventsToSuccess(t *testing.T) {
 	require.NoError(t, err)
 	// act
 	err = outbox.ProcessOutboxEvents(
-		ctx, tree, now.Add(time.Minute), 1, lockToken, sendOutboxEventToPspFakeSuccess(idPspPayment), eventIsErroredWithTwoAttempts,
+		ctx,
+		tree,
+		now.Add(time.Minute),
+		1,
+		lockToken,
+		sendOutboxEventToPspFakeSuccess(idPspPayment),
+		eventIsErroredWithTwoAttempts,
 	)
 	require.NoError(t, err)
 	// assert
@@ -199,7 +210,7 @@ func TestProcessOutboxEventsToRetry(t *testing.T) {
 	require.NoError(t, err)
 	// act
 	err = outbox.ProcessOutboxEvents(
-		ctx, tree, now.Add(time.Minute), 1, lockToken, sendOutboxEventToPspFakeServerError, eventIsErroredWithTwoAttempts,
+		ctx, tree, now.Add(time.Minute), 1, lockToken, sendOutboxEventToPspFakeServerError(), eventIsErroredWithTwoAttempts,
 	)
 	require.NoError(t, err)
 	// assert
@@ -239,12 +250,12 @@ func TestProcessOutboxEventsToErrored(t *testing.T) {
 	require.NoError(t, err)
 	// act
 	firstSendError := outbox.ProcessOutboxEvents(
-		ctx, tree, now.Add(time.Minute), 1, uuid.New(), sendOutboxEventToPspFakeServerError, eventIsErroredWithTwoAttempts,
+		ctx, tree, now.Add(time.Minute), 1, uuid.New(), sendOutboxEventToPspFakeServerError(), eventIsErroredWithTwoAttempts,
 	)
 	require.NoError(t, firstSendError, "first send")
 
 	secondSendError := outbox.ProcessOutboxEvents(
-		ctx, tree, now.Add(time.Duration(2)*time.Minute), 1, uuid.New(), sendOutboxEventToPspFakeServerError, eventIsErroredWithTwoAttempts,
+		ctx, tree, now.Add(time.Duration(2)*time.Minute), 1, uuid.New(), sendOutboxEventToPspFakeServerError(), eventIsErroredWithTwoAttempts,
 	)
 	require.NoError(t, secondSendError, "second send")
 	// assert

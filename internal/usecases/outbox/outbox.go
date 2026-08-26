@@ -14,6 +14,7 @@ import (
 	"github.com/fmndantas/payments/internal/db"
 	"github.com/fmndantas/payments/internal/dependencies"
 	"github.com/fmndantas/payments/internal/psp"
+	"github.com/fmndantas/payments/internal/resilience"
 )
 
 var reserveOutboxEventsCommand = `
@@ -85,7 +86,7 @@ func ProcessOutboxEvents(
 	nowReference time.Time,
 	batchSize int,
 	lockToken uuid.UUID,
-	sendEventToPsp psp.SendEventToPspFn,
+	sendToPsp resilience.CircuitBreakerHandler[psp.PspInput, psp.PspOutput],
 	decideNextErrorStatus DecideNextErrorStatusFn,
 ) error {
 	log.Println("processing outbox events")
@@ -137,9 +138,16 @@ func ProcessOutboxEvents(
 
 	// TODO: paralellize
 	for _, outboxEvent := range outboxEvents {
-		pspOutput := sendEventToPsp(psp.PspInput{Context: context, Outbox: outboxEvent})
+		result := sendToPsp(nowReference, psp.PspInput{Context: context, Outbox: outboxEvent})
 		if persistError := persistEventUpdate(
-			context, tree, outboxEvent, pspOutput.Http, pspOutput.Error, lockToken, nowReference, decideNextErrorStatus,
+			context,
+			tree,
+			outboxEvent,
+			result.RequestResult.Http,
+			result.RequestResult.Error,
+			lockToken,
+			nowReference,
+			decideNextErrorStatus,
 		); persistError != nil {
 			numberOfErrors++
 			aggregatedError = errors.Join(persistError, aggregatedError)
