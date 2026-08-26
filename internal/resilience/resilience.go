@@ -42,7 +42,7 @@ func getNextOpenUntil(nowReference time.Time) *time.Time {
 type CircuitBreakerHandler[U any, T any] = func(time.Time, U) *CircuitBreakerInfo[T]
 
 func CreateCircuitBreaker[U any, T any](
-	numberOfErrorsToOpenTheCircuit int,
+	maximumNumberOfErrorsBeforeOpen int,
 	doRequest DoRequest[U, T],
 	checkRequestIsErrored func(T) bool,
 ) CircuitBreakerHandler[U, T] {
@@ -57,7 +57,7 @@ func CreateCircuitBreaker[U any, T any](
 			if requestIsErrored {
 				currentNumberOfErrors += 1
 			}
-			if currentInfo.IsClosed() && currentNumberOfErrors >= numberOfErrorsToOpenTheCircuit {
+			if currentInfo.IsClosed() && currentNumberOfErrors > maximumNumberOfErrorsBeforeOpen {
 				currentInfo = &CircuitBreakerInfo[T]{
 					status:        open,
 					OpenUntil:     getNextOpenUntil(nowReference),

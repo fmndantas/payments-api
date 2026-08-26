@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"os"
 	"sync"
 	"testing"
@@ -66,7 +67,11 @@ func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) outbox.SendToPsp {
 			JsonBody:       fmt.Sprintf("{ \"id_psp_payment\": \"%s\" }", idPspPayment.String()),
 		}}
 	}
-	return resilience.CreateCircuitBreaker(1000, doRequest, func(_ psp.PspOutput) bool { return false })
+	return resilience.CreateCircuitBreaker(
+		rand.IntN(1000),
+		doRequest,
+		func(_ psp.PspOutput) bool { return false },
+	)
 }
 
 func sendOutboxEventToPspFakeServerError() outbox.SendToPsp {
@@ -76,7 +81,11 @@ func sendOutboxEventToPspFakeServerError() outbox.SendToPsp {
 			JsonBody:       "{ \"error\": \"the server couldn't process the request\" }",
 		}}
 	}
-	return resilience.CreateCircuitBreaker(1000, doRequest, func(_ psp.PspOutput) bool { return false })
+	return resilience.CreateCircuitBreaker(
+		rand.IntN(1000),
+		doRequest,
+		func(_ psp.PspOutput) bool { return false },
+	)
 }
 
 func eventIsErroredWithTwoAttempts(currentAttemptCount int) string {
@@ -315,6 +324,69 @@ func TestProcessOutboxEventsDoesNotGetEventsWithFinalStates(t *testing.T) {
 	assert.Equal(t, 1, outboxEvent.AttemptCount, "outbox.attempt_count")
 }
 
+func TestProcessOutboxEventsWithCircuitBreaker(t *testing.T) {
+	// arrange
+	var (
+		ctx = context.Background()
+		now = time.Now()
+	)
+	require.NoError(t, resetDbState(ctx, tree))
+	for range 100 {
+		_, err := checkout.HandleCheckout(
+			tree, ctx, uuid.New(), test.IdSourceAccountAsUuid(), test.IdDestinyAccountAsUuid(), now,
+		)
+		require.NoError(t, err, "checkout")
+	}
+	doRequest := func(_ psp.PspInput) psp.PspOutput {
+		return psp.PspOutput{Http: psp.PspHttpResponse{
+			HttpStatusCode: 500,
+			JsonBody:       "{ \"error\": \"the server couldn't process the request\" }",
+		}}
+	}
+	sendToPsp := resilience.CreateCircuitBreaker(
+		25,
+		doRequest,
+		func(_ psp.PspOutput) bool { return true },
+	)
+	// act
+	err := outbox.ProcessOutboxEvents(
+		ctx,
+		tree,
+		now.Add(time.Minute),
+		50,
+		uuid.New(),
+		sendToPsp,
+		eventIsErroredWithOneAttempt,
+	)
+	// assert
+	require.NoError(t, err)
+	rows, err := tree.DbPool.Query(ctx, "select * from outbox")
+	require.NoError(t, err)
+	outboxEvents, err := pgx.CollectRows(rows, pgx.RowToStructByName[db.Outbox])
+	require.NoError(t, err)
+	assert.Equal(t, 100, len(outboxEvents))
+	var (
+		unprocessedCount = 0
+		erroredCount     = 0
+	)
+	for _, outboxEvent := range outboxEvents {
+		require.Condition(t, func() bool {
+			return outboxEvent.Status == outbox.UNPROCESSED || outboxEvent.Status == outbox.ERRORED
+		}, "status should be unprocessed or errored")
+		if outboxEvent.Status == outbox.UNPROCESSED {
+			unprocessedCount++
+		} else {
+			erroredCount++
+		}
+	}
+	assert.Equal(t, 25, erroredCount, "errored count")
+	assert.Equal(t, 75, unprocessedCount, "unprocessed count")
+	for _, outboxEvent := range outboxEvents {
+		assert.Nil(t, outboxEvent.LockToken, "outbox.lock_token")
+		assert.Nil(t, outboxEvent.LockedUntil, "outbox.locked_until")
+	}
+}
+
 func TestProcessOutboxEvents4Workers(t *testing.T) {
 	t.Skip("Expensive test")
 	// arrange
@@ -342,7 +414,15 @@ func TestProcessOutboxEvents4Workers(t *testing.T) {
 	var wg sync.WaitGroup
 	for range numberOfWorkers {
 		wg.Go(func() {
-			outbox.ProcessOutboxEvents(ctx, tree, time.Now(), N/numberOfWorkers, uuid.New(), sendOutboxEventToPspFakeSuccess(uuid.New()), eventIsErroredWithTwoAttempts)
+			outbox.ProcessOutboxEvents(
+				ctx,
+				tree,
+				time.Now(),
+				N/numberOfWorkers,
+				uuid.New(),
+				sendOutboxEventToPspFakeSuccess(uuid.New()),
+				eventIsErroredWithTwoAttempts,
+			)
 		})
 	}
 	wg.Wait()

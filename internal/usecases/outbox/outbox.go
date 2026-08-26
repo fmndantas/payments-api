@@ -134,31 +134,53 @@ func ProcessOutboxEvents(
 	}
 
 	var (
-		numberOfErrors  = 0
-		aggregatedError error
+		numberOfErrors      = 0
+		persistErrors       error
+		unreservationErrors error
 	)
 
 	// TODO: paralellize
+	shouldUnreserveBatch := false
 	for _, outboxEvent := range outboxEvents {
-		result := sendToPsp(nowReference, psp.PspInput{Context: context, Outbox: outboxEvent})
-		if persistError := persistEventUpdate(
-			context,
-			tree,
-			outboxEvent,
-			result.RequestResult.Http,
-			result.RequestResult.Error,
-			lockToken,
-			nowReference,
-			decideNextErrorStatus,
-		); persistError != nil {
-			numberOfErrors++
-			aggregatedError = errors.Join(persistError, aggregatedError)
+		breakerResult := sendToPsp(nowReference, psp.PspInput{Context: context, Outbox: outboxEvent})
+		if breakerResult.IsOpen() {
+			log.Printf("circuit breaker tripped")
+			shouldUnreserveBatch = true
+			break
+		} else {
+			persistError := persistEventUpdate(
+				context,
+				tree,
+				outboxEvent,
+				breakerResult.RequestResult.Http,
+				breakerResult.RequestResult.Error,
+				lockToken,
+				nowReference,
+				decideNextErrorStatus,
+			)
+			if persistError != nil {
+				numberOfErrors++
+				persistErrors = errors.Join(persistError, persistErrors)
+			}
 		}
 	}
 
-	log.Printf("processed %d outbox events. number of errors: %d\n", tag.RowsAffected(), numberOfErrors)
+	if shouldUnreserveBatch {
+		tx, err := tree.DbPool.Begin(context)
+		unreservationErrors = errors.Join(unreservationErrors, err)
+		tag, err = tx.Exec(
+			context,
+			"update outbox set lock_token = null, locked_until = null where lock_token = $1",
+			lockToken,
+		)
+		unreservationErrors = errors.Join(unreservationErrors, err)
+		if err = tx.Commit(context); err != nil {
+			unreservationErrors = errors.Join(unreservationErrors, err)
+			tx.Rollback(context)
+		}
+	}
 
-	return aggregatedError
+	return errors.Join(persistErrors, unreservationErrors)
 }
 
 func EventIsErroredWithFiveAttempts(currentAttemptCount int) string {

@@ -23,7 +23,7 @@ func TestCircuitBreakerFlux(t *testing.T) {
 	}
 
 	breaker := resilience.CreateCircuitBreaker(
-		2,
+		1,
 		doRequest,
 		func(_ int) bool { return requestFails },
 	)
