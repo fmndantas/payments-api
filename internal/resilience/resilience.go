@@ -45,12 +45,17 @@ func CreateCircuitBreaker[U any, T any](
 	maximumNumberOfErrorsBeforeOpen int,
 	doRequest DoRequest[U, T],
 	checkRequestIsErrored func(T) bool,
-) CircuitBreakerHandler[U, T] {
+) (CircuitBreakerHandler[U, T], func(time.Time) bool) {
 	var (
 		currentNumberOfErrors = 0
 		currentInfo           = &CircuitBreakerInfo[T]{status: closed, OpenUntil: nil}
 	)
-	return func(nowReference time.Time, requestInput U) *CircuitBreakerInfo[T] {
+
+	isOpen := func(nowReference time.Time) bool {
+		return currentInfo.IsOpen() && !currentInfo.IsHalfOpen(nowReference)
+	}
+
+	handler := func(nowReference time.Time, requestInput U) *CircuitBreakerInfo[T] {
 		if currentInfo.IsClosed() || currentInfo.IsHalfOpen(nowReference) {
 			requestResponse := doRequest(requestInput)
 			requestIsErrored := checkRequestIsErrored(requestResponse)
@@ -80,4 +85,6 @@ func CreateCircuitBreaker[U any, T any](
 		}
 		return currentInfo
 	}
+
+	return handler, isOpen
 }

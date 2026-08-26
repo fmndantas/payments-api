@@ -35,10 +35,10 @@ func main() {
 
 	ch := make(chan error)
 
-	pspWithCircuitBreaker := resilience.CreateCircuitBreaker(
+	pspWithCircuitBreaker, isPspCircuitOpen := resilience.CreateCircuitBreaker(
 		20,
 		psp.SendOutboxEventToPspFake,
-		func(_ psp.PspOutput) bool { return false },
+		func(output psp.PspOutput) bool { return output.Http.HttpStatusCode >= 500 },
 	)
 
 	go func() {
@@ -49,6 +49,7 @@ func main() {
 				now,
 				10,
 				uuid.New(),
+				isPspCircuitOpen,
 				pspWithCircuitBreaker,
 				outbox.EventIsErroredWithFiveAttempts,
 			)

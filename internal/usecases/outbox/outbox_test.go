@@ -60,7 +60,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) outbox.SendToPsp {
+func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) (outbox.SendToPsp, func(time.Time) bool) {
 	doRequest := func(_ psp.PspInput) psp.PspOutput {
 		return psp.PspOutput{Http: psp.PspHttpResponse{
 			HttpStatusCode: 202,
@@ -74,7 +74,7 @@ func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) outbox.SendToPsp {
 	)
 }
 
-func sendOutboxEventToPspFakeServerError() outbox.SendToPsp {
+func sendOutboxEventToPspFakeServerError() (outbox.SendToPsp, func(time.Time) bool) {
 	doRequest := func(_ psp.PspInput) psp.PspOutput {
 		return psp.PspOutput{Http: psp.PspHttpResponse{
 			HttpStatusCode: 500,
@@ -164,13 +164,15 @@ func TestProcessOutboxEventsToSuccess(t *testing.T) {
 	)
 	require.NoError(t, err)
 	// act
+	sendToPsp, isOpen := sendOutboxEventToPspFakeSuccess(idPspPayment)
 	err = outbox.ProcessOutboxEvents(
 		ctx,
 		tree,
 		now.Add(time.Minute),
 		1,
 		lockToken,
-		sendOutboxEventToPspFakeSuccess(idPspPayment),
+		isOpen,
+		sendToPsp,
 		eventIsErroredWithTwoAttempts,
 	)
 	require.NoError(t, err)
@@ -218,8 +220,9 @@ func TestProcessOutboxEventsToRetry(t *testing.T) {
 	)
 	require.NoError(t, err)
 	// act
+	sendToPsp, isOpen := sendOutboxEventToPspFakeServerError()
 	err = outbox.ProcessOutboxEvents(
-		ctx, tree, now.Add(time.Minute), 1, lockToken, sendOutboxEventToPspFakeServerError(), eventIsErroredWithTwoAttempts,
+		ctx, tree, now.Add(time.Minute), 1, lockToken, isOpen, sendToPsp, eventIsErroredWithTwoAttempts,
 	)
 	require.NoError(t, err)
 	// assert
@@ -258,13 +261,14 @@ func TestProcessOutboxEventsToErrored(t *testing.T) {
 	)
 	require.NoError(t, err)
 	// act
+	sendToPsp, isOpen := sendOutboxEventToPspFakeServerError()
 	firstSendError := outbox.ProcessOutboxEvents(
-		ctx, tree, now.Add(time.Minute), 1, uuid.New(), sendOutboxEventToPspFakeServerError(), eventIsErroredWithTwoAttempts,
+		ctx, tree, now.Add(time.Minute), 1, uuid.New(), isOpen, sendToPsp, eventIsErroredWithTwoAttempts,
 	)
 	require.NoError(t, firstSendError, "first send")
 
 	secondSendError := outbox.ProcessOutboxEvents(
-		ctx, tree, now.Add(time.Duration(2)*time.Minute), 1, uuid.New(), sendOutboxEventToPspFakeServerError(), eventIsErroredWithTwoAttempts,
+		ctx, tree, now.Add(time.Duration(2)*time.Minute), 1, uuid.New(), isOpen, sendToPsp, eventIsErroredWithTwoAttempts,
 	)
 	require.NoError(t, secondSendError, "second send")
 	// assert
@@ -302,14 +306,15 @@ func TestProcessOutboxEventsDoesNotGetEventsWithFinalStates(t *testing.T) {
 		now,
 	)
 	require.NoError(t, err)
+	sendToPsp, isOpen := sendOutboxEventToPspFakeSuccess(uuid.New())
 	firstSendError := outbox.ProcessOutboxEvents(
-		ctx, tree, now.Add(time.Minute), 1, uuid.New(), sendOutboxEventToPspFakeSuccess(uuid.New()), eventIsErroredWithTwoAttempts,
+		ctx, tree, now.Add(time.Minute), 1, uuid.New(), isOpen, sendToPsp, eventIsErroredWithTwoAttempts,
 	)
 	require.NoError(t, firstSendError, "first send")
 	// act
 	for i := range 10 {
 		otherSend := outbox.ProcessOutboxEvents(
-			ctx, tree, now.Add(time.Duration(i)*time.Minute), 1, uuid.New(), sendOutboxEventToPspFakeSuccess(uuid.New()), eventIsErroredWithTwoAttempts,
+			ctx, tree, now.Add(time.Duration(i)*time.Minute), 1, uuid.New(), isOpen, sendToPsp, eventIsErroredWithTwoAttempts,
 		)
 		require.NoError(t, otherSend, fmt.Sprintf("other send %d", i))
 	}
@@ -343,7 +348,7 @@ func TestProcessOutboxEventsWithCircuitBreaker(t *testing.T) {
 			JsonBody:       "{ \"error\": \"the server couldn't process the request\" }",
 		}}
 	}
-	sendToPsp := resilience.CreateCircuitBreaker(
+	sendToPsp, isOpen := resilience.CreateCircuitBreaker(
 		25,
 		doRequest,
 		func(_ psp.PspOutput) bool { return true },
@@ -355,6 +360,7 @@ func TestProcessOutboxEventsWithCircuitBreaker(t *testing.T) {
 		now.Add(time.Minute),
 		50,
 		uuid.New(),
+		isOpen,
 		sendToPsp,
 		eventIsErroredWithOneAttempt,
 	)
@@ -414,13 +420,15 @@ func TestProcessOutboxEvents4Workers(t *testing.T) {
 	var wg sync.WaitGroup
 	for range numberOfWorkers {
 		wg.Go(func() {
+			sendToPsp, isOpen := sendOutboxEventToPspFakeSuccess(uuid.New())
 			outbox.ProcessOutboxEvents(
 				ctx,
 				tree,
 				time.Now(),
 				N/numberOfWorkers,
 				uuid.New(),
-				sendOutboxEventToPspFakeSuccess(uuid.New()),
+				isOpen,
+				sendToPsp,
 				eventIsErroredWithTwoAttempts,
 			)
 		})

@@ -88,9 +88,15 @@ func ProcessOutboxEvents(
 	nowReference time.Time,
 	batchSize int,
 	lockToken uuid.UUID,
+	isPspCircuitOpen func(time.Time) bool,
 	sendToPsp SendToPsp,
 	decideNextErrorStatus DecideNextErrorStatusFn,
 ) error {
+	if isPspCircuitOpen(nowReference) {
+		log.Println("circuit breaker is open; skipping outbox batch")
+		return nil
+	}
+
 	log.Println("processing outbox events")
 
 	tx, err := tree.DbPool.Begin(context)
