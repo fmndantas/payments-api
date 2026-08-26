@@ -59,7 +59,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) resilience.CircuitBreakerHandler[psp.PspInput, psp.PspOutput] {
+func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) outbox.SendToPsp {
 	doRequest := func(_ psp.PspInput) psp.PspOutput {
 		return psp.PspOutput{Http: psp.PspHttpResponse{
 			HttpStatusCode: 202,
@@ -69,7 +69,7 @@ func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) resilience.CircuitB
 	return resilience.CreateCircuitBreaker(1000, doRequest, func(_ psp.PspOutput) bool { return false })
 }
 
-func sendOutboxEventToPspFakeServerError() resilience.CircuitBreakerHandler[psp.PspInput, psp.PspOutput] {
+func sendOutboxEventToPspFakeServerError() outbox.SendToPsp {
 	doRequest := func(_ psp.PspInput) psp.PspOutput {
 		return psp.PspOutput{Http: psp.PspHttpResponse{
 			HttpStatusCode: 500,

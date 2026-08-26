@@ -72,7 +72,9 @@ where id_internal = $3
 `
 
 type DecideNextErrorStatusFn = func(currentAttemptCount int) string
+type SendToPsp = resilience.CircuitBreakerHandler[psp.PspInput, psp.PspOutput]
 
+// TODO: move to package
 var (
 	UNPROCESSED = "unprocessed"
 	RETRY       = "retry"
@@ -86,7 +88,7 @@ func ProcessOutboxEvents(
 	nowReference time.Time,
 	batchSize int,
 	lockToken uuid.UUID,
-	sendToPsp resilience.CircuitBreakerHandler[psp.PspInput, psp.PspOutput],
+	sendToPsp SendToPsp,
 	decideNextErrorStatus DecideNextErrorStatusFn,
 ) error {
 	log.Println("processing outbox events")
