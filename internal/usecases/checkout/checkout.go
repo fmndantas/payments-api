@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/fmndantas/payments/internal/dependencies"
-	"github.com/fmndantas/payments/internal/usecases/outbox"
+	"github.com/fmndantas/payments/internal/usecases/eventstatus"
 )
 
 var (
@@ -88,7 +88,7 @@ func HandleCheckout(
 		context,
 		`insert into outbox (id_payment, status, next_try_at, created_at)
 		values ($1, $2, $3, $4)`,
-		idInternalPayment, outbox.UNPROCESSED, nowReference, nowReference,
+		idInternalPayment, eventstatus.Unprocessed, nowReference, nowReference,
 	)
 	defer tx.Rollback(context)
 

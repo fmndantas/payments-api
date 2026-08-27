@@ -15,7 +15,11 @@ import (
 	"github.com/fmndantas/payments/internal/dependencies"
 	"github.com/fmndantas/payments/internal/psp"
 	"github.com/fmndantas/payments/internal/resilience"
+	"github.com/fmndantas/payments/internal/usecases/eventstatus"
 )
+
+// Convenience alias; the canonical definition lives in the eventstatus package.
+type OutboxStatus = eventstatus.OutboxStatus
 
 var reserveOutboxEventsCommand = `
 with selected_outbox_events as (
@@ -71,16 +75,8 @@ update payment set
 where id_internal = $3
 `
 
-type DecideNextErrorStatusFn = func(currentAttemptCount int) string
+type DecideNextErrorStatusFn = func(currentAttemptCount int) OutboxStatus
 type SendToPsp = resilience.CircuitBreakerHandler[psp.PspInput, psp.PspOutput]
-
-// TODO: move to package
-var (
-	UNPROCESSED = "unprocessed"
-	RETRY       = "retry"
-	ERRORED     = "errored"
-	SUCCESS     = "success"
-)
 
 func ProcessOutboxEvents(
 	context context.Context,
@@ -114,7 +110,7 @@ func ProcessOutboxEvents(
 		batchSize,
 		nowReference.Add(10*time.Minute),
 		lockToken,
-		[]string{ERRORED, SUCCESS},
+		[]OutboxStatus{eventstatus.Errored, eventstatus.Success},
 	)
 
 	if err != nil {
@@ -140,9 +136,9 @@ func ProcessOutboxEvents(
 	}
 
 	var (
-		numberOfErrors      = 0
-		persistErrors       error
-		unreservationErrors error
+		numberOfPersistenceErrors = 0
+		persistenceErrors         error
+		unreservationErrors       error
 	)
 
 	// TODO: paralellize
@@ -154,7 +150,7 @@ func ProcessOutboxEvents(
 			shouldUnreserveBatch = true
 			break
 		} else {
-			persistError := persistEventUpdate(
+			persistenceError := persistEventUpdate(
 				context,
 				tree,
 				outboxEvent,
@@ -164,9 +160,9 @@ func ProcessOutboxEvents(
 				nowReference,
 				decideNextErrorStatus,
 			)
-			if persistError != nil {
-				numberOfErrors++
-				persistErrors = errors.Join(persistError, persistErrors)
+			if persistenceError != nil {
+				numberOfPersistenceErrors++
+				persistenceErrors = errors.Join(persistenceError, persistenceErrors)
 			}
 		}
 	}
@@ -186,14 +182,14 @@ func ProcessOutboxEvents(
 		}
 	}
 
-	return errors.Join(persistErrors, unreservationErrors)
+	return errors.Join(persistenceErrors, unreservationErrors)
 }
 
-func EventIsErroredWithFiveAttempts(currentAttemptCount int) string {
+func EventIsErroredWithFiveAttempts(currentAttemptCount int) OutboxStatus {
 	if currentAttemptCount+1 >= 5 {
-		return ERRORED
+		return eventstatus.Errored
 	}
-	return RETRY
+	return eventstatus.Retry
 }
 
 func persistEventUpdate(
@@ -328,7 +324,7 @@ func markEventAsSuccessful(
 	_, err := tx.Exec(
 		context,
 		markOutboxEventAsSuccessCommand,
-		SUCCESS,
+		eventstatus.Success,
 		pspHttpResponse.JsonBody,
 		nowReference,
 		event.Id,

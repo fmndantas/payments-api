@@ -20,6 +20,7 @@ import (
 	"github.com/fmndantas/payments/internal/psp"
 	"github.com/fmndantas/payments/internal/resilience"
 	"github.com/fmndantas/payments/internal/usecases/checkout"
+	"github.com/fmndantas/payments/internal/usecases/eventstatus"
 	"github.com/fmndantas/payments/internal/usecases/outbox"
 	"github.com/fmndantas/payments/test"
 )
@@ -88,15 +89,15 @@ func sendOutboxEventToPspFakeServerError() (outbox.SendToPsp, func(time.Time) bo
 	)
 }
 
-func eventIsErroredWithTwoAttempts(currentAttemptCount int) string {
+func eventIsErroredWithTwoAttempts(currentAttemptCount int) outbox.OutboxStatus {
 	if currentAttemptCount+1 >= 2 {
-		return outbox.ERRORED
+		return eventstatus.Errored
 	}
-	return outbox.RETRY
+	return eventstatus.Retry
 }
 
-func eventIsErroredWithOneAttempt(currentAttemptCount int) string {
-	return outbox.ERRORED
+func eventIsErroredWithOneAttempt(currentAttemptCount int) outbox.OutboxStatus {
+	return eventstatus.Errored
 }
 
 func resetDbState(context context.Context, tree *dependencies.Tree) error {
@@ -184,7 +185,7 @@ func TestProcessOutboxEventsToSuccess(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(outboxEvents))
 	for _, outboxEvent := range outboxEvents {
-		assert.Equal(t, outbox.SUCCESS, outboxEvent.Status, "outbox.status")
+		assert.Equal(t, eventstatus.Success.String(), outboxEvent.Status, "outbox.status")
 		assert.Equal(t, 1, outboxEvent.AttemptCount, "outbox.attempt_count")
 		require.Nil(t, outboxEvent.LockToken, "outbox.lock_token")
 		require.Nil(t, outboxEvent.LockedUntil, "outbox.locked_until")
@@ -233,7 +234,7 @@ func TestProcessOutboxEventsToRetry(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(outboxEvents))
 	for _, outboxEvent := range outboxEvents {
-		assert.Equal(t, outbox.RETRY, outboxEvent.Status, "outbox.status")
+		assert.Equal(t, eventstatus.Retry.String(), outboxEvent.Status, "outbox.status")
 		assert.Equal(t, 1, outboxEvent.AttemptCount, "outbox.attempt_count")
 		require.NotNil(t, outboxEvent.LastResult, "outbox.last_result")
 		assert.Contains(t, *outboxEvent.LastResult, "500", "outbox.last_result")
@@ -266,7 +267,6 @@ func TestProcessOutboxEventsToErrored(t *testing.T) {
 		ctx, tree, now.Add(time.Minute), 1, uuid.New(), isOpen, sendToPsp, eventIsErroredWithTwoAttempts,
 	)
 	require.NoError(t, firstSendError, "first send")
-
 	secondSendError := outbox.ProcessOutboxEvents(
 		ctx, tree, now.Add(time.Duration(2)*time.Minute), 1, uuid.New(), isOpen, sendToPsp, eventIsErroredWithTwoAttempts,
 	)
@@ -279,7 +279,7 @@ func TestProcessOutboxEventsToErrored(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(outboxEvents))
 	for _, outboxEvent := range outboxEvents {
-		assert.Equal(t, outbox.ERRORED, outboxEvent.Status, "outbox.status")
+		assert.Equal(t, eventstatus.Errored.String(), outboxEvent.Status, "outbox.status")
 		assert.Equal(t, 2, outboxEvent.AttemptCount, "outbox.attempt_count")
 		require.NotNil(t, outboxEvent.LastResult, "outbox.last_result")
 		assert.Contains(t, *outboxEvent.LastResult, "500", "outbox.last_result")
@@ -325,7 +325,7 @@ func TestProcessOutboxEventsDoesNotGetEventsWithFinalStates(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(outboxEvents))
 	outboxEvent := outboxEvents[0]
-	assert.Equal(t, outbox.SUCCESS, outboxEvent.Status, "outbox.status")
+	assert.Equal(t, eventstatus.Success.String(), outboxEvent.Status, "outbox.status")
 	assert.Equal(t, 1, outboxEvent.AttemptCount, "outbox.attempt_count")
 }
 
@@ -377,9 +377,9 @@ func TestProcessOutboxEventsWithCircuitBreaker(t *testing.T) {
 	)
 	for _, outboxEvent := range outboxEvents {
 		require.Condition(t, func() bool {
-			return outboxEvent.Status == outbox.UNPROCESSED || outboxEvent.Status == outbox.ERRORED
+			return outboxEvent.Status == eventstatus.Unprocessed.String() || outboxEvent.Status == eventstatus.Errored.String()
 		}, "status should be unprocessed or errored")
-		if outboxEvent.Status == outbox.UNPROCESSED {
+		if outboxEvent.Status == eventstatus.Unprocessed.String() {
 			unprocessedCount++
 		} else {
 			erroredCount++
@@ -442,6 +442,6 @@ func TestProcessOutboxEvents4Workers(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, N, len(outboxEvents))
 	for _, outboxEvent := range outboxEvents {
-		assert.Equal(t, outbox.SUCCESS, outboxEvent.Status, "outbox.status")
+		assert.Equal(t, eventstatus.Success.String(), outboxEvent.Status, "outbox.status")
 	}
 }
