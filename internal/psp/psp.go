@@ -35,23 +35,23 @@ func SendOutboxEventToPspFake(pspInput PspInput) PspOutput {
 		return PspOutput{Error: pspInput.Context.Err()}
 	}
 
-	randomHttpStatusCode := rand.IntN(100)
+	randomValue := rand.IntN(100)
 
-	if randomHttpStatusCode > 75 {
+	if randomValue > 75 {
 		return PspOutput{
 			Http: PspHttpResponse{
 				HttpStatusCode: 500,
 				JsonBody:       "{ \"error\": \"the server couldn't process the request\" }",
 			},
 		}
-	} else if randomHttpStatusCode > 50 {
+	} else if randomValue > 50 {
 		return PspOutput{
 			Http: PspHttpResponse{
 				HttpStatusCode: 429,
 				JsonBody:       "{ \"error\": \"the server is busy\" }",
 			},
 		}
-	} else if randomHttpStatusCode > 25 {
+	} else if randomValue > 25 {
 		return PspOutput{
 			Error: errors.New("this is an unexpected error"),
 		}
