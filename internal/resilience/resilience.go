@@ -61,6 +61,8 @@ func CreateCircuitBreaker[U any, T any](
 			requestIsErrored := checkRequestIsErrored(requestResponse)
 			if requestIsErrored {
 				currentNumberOfErrors += 1
+			} else {
+				currentNumberOfErrors = 0
 			}
 			if currentInfo.IsClosed() && currentNumberOfErrors > maximumNumberOfErrorsBeforeOpen {
 				currentInfo = &CircuitBreakerInfo[T]{

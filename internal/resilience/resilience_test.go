@@ -1,6 +1,7 @@
 package resilience_test
 
 import (
+	"math/rand/v2"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 func TestCircuitBreakerFlux(t *testing.T) {
 	var (
 		now          = time.Now()
-		anyInput     = 1
+		anyInput     = rand.IntN(1000)
 		requestFails = true
 		requestCalls = 0
 	)
@@ -80,4 +81,24 @@ func TestCircuitBreakerFlux(t *testing.T) {
 	openAgain := breaker(now, anyInput)
 	assert.Equal(t, 6, requestCalls)
 	assert.True(t, openAgain.IsOpen())
+}
+
+func TestIfSuccessResetsErrorCounting(t *testing.T) {
+	doRequest := func(_ int) int { return 1 }
+	requestFails := true
+	anyInput := rand.IntN(1000)
+	breaker, _ := resilience.CreateCircuitBreaker(
+		10,
+		doRequest,
+		func(_ int) bool { return requestFails },
+	)
+	for range 10 {
+		breaker(time.Now(), anyInput)
+	}
+	requestFails = false
+	ok := breaker(time.Now(), anyInput)
+	assert.True(t, ok.IsClosed())
+	requestFails = true
+	fail := breaker(time.Now(), anyInput)
+	assert.True(t, fail.IsClosed())
 }
