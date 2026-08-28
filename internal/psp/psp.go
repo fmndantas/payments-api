@@ -18,12 +18,12 @@ type PspInput struct {
 }
 
 type PspHttpResponse struct {
-	HttpStatusCode int
-	JsonBody       string
+	StatusCode int
+	JsonBody   string
 }
 
 type PspOutput struct {
-	Http  PspHttpResponse
+	HttpResponse  PspHttpResponse
 	Error error
 }
 
@@ -39,16 +39,16 @@ func SendOutboxEventToPspFake(pspInput PspInput) PspOutput {
 
 	if randomValue > 75 {
 		return PspOutput{
-			Http: PspHttpResponse{
-				HttpStatusCode: 500,
-				JsonBody:       "{ \"error\": \"the server couldn't process the request\" }",
+			HttpResponse: PspHttpResponse{
+				StatusCode: 500,
+				JsonBody:   "{ \"error\": \"the server couldn't process the request\" }",
 			},
 		}
 	} else if randomValue > 50 {
 		return PspOutput{
-			Http: PspHttpResponse{
-				HttpStatusCode: 429,
-				JsonBody:       "{ \"error\": \"the server is busy\" }",
+			HttpResponse: PspHttpResponse{
+				StatusCode: 429,
+				JsonBody:   "{ \"error\": \"the server is busy\" }",
 			},
 		}
 	} else if randomValue > 25 {
@@ -57,9 +57,9 @@ func SendOutboxEventToPspFake(pspInput PspInput) PspOutput {
 		}
 	} else {
 		return PspOutput{
-			Http: PspHttpResponse{
-				HttpStatusCode: 202,
-				JsonBody:       fmt.Sprintf("{ \"id_psp_payment\": \"%s\" }", uuid.New().String()),
+			HttpResponse: PspHttpResponse{
+				StatusCode: 202,
+				JsonBody:   fmt.Sprintf("{ \"id_psp_payment\": \"%s\" }", uuid.New().String()),
 			},
 		}
 	}

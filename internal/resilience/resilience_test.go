@@ -35,14 +35,13 @@ func TestCircuitBreakerFlux(t *testing.T) {
 	assert.True(t, firstFailure.IsClosed(), "should remain closed")
 	assert.Nil(t, firstFailure.OpenUntil, "closed: no OpenUntil")
 	require.NotNil(t, firstFailure.RequestResult, "closed: has response")
-	assert.Equal(t, 1, *firstFailure.RequestResult, "response == 1")
+	assert.Equal(t, 1, firstFailure.RequestResult, "response == 1")
 
 	// Second failed request reaches the threshold and opens the circuit.
 	opened := breaker(now, anyInput)
 	assert.Equal(t, 2, requestCalls)
 	assert.True(t, opened.IsOpen(), "should open at threshold")
 	require.NotNil(t, opened.OpenUntil, "open: has OpenUntil")
-	assert.Nil(t, opened.RequestResult, "open: no response")
 
 	// Requests before OpenUntil are short-circuited.
 	stillOpenAt := opened.OpenUntil.Add(-time.Minute)
@@ -50,7 +49,6 @@ func TestCircuitBreakerFlux(t *testing.T) {
 	assert.Equal(t, 2, requestCalls, "open: request is not called")
 	assert.True(t, stillOpen.IsOpen(), "should stay open")
 	assert.Equal(t, opened.OpenUntil, stillOpen.OpenUntil, "open window is unchanged")
-	assert.Nil(t, stillOpen.RequestResult, "open: no response")
 
 	// A failed half-open probe reopens the circuit for another window.
 	reopenAt := opened.OpenUntil.Add(time.Minute)
@@ -59,7 +57,6 @@ func TestCircuitBreakerFlux(t *testing.T) {
 	assert.True(t, reopened.IsOpen(), "failed probe reopens circuit")
 	require.NotNil(t, reopened.OpenUntil, "reopened: has OpenUntil")
 	assert.Equal(t, reopenAt.Add(30*time.Minute), *reopened.OpenUntil, "open window is reset")
-	assert.Nil(t, reopened.RequestResult, "reopened: no response")
 
 	// A successful half-open probe closes the circuit.
 	requestFails = false
@@ -68,7 +65,7 @@ func TestCircuitBreakerFlux(t *testing.T) {
 	assert.True(t, recovered.IsClosed(), "successful probe closes circuit")
 	assert.Nil(t, recovered.OpenUntil, "closed: no OpenUntil")
 	require.NotNil(t, recovered.RequestResult, "closed: has response")
-	assert.Equal(t, 1, *recovered.RequestResult, "response == 1")
+	assert.Equal(t, 1, recovered.RequestResult, "response == 1")
 
 	// After recovery, a new failure sequence starts at zero.
 	requestFails = true

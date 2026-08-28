@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,14 +17,11 @@ import (
 
 // TODO: graceful shutdown?
 func main() {
-	idWorker := uuid.New()
-
-	log.SetFlags(0)
-	log.SetPrefix(fmt.Sprintf("[worker - %s] ", idWorker.String()))
-
 	// FIX: get this from env
 	dbConfiguration := db.CreateLocalConfiguration()
 	tree, err := dependencies.Initialize(dbConfiguration)
+
+	slog.SetLogLoggerLevel(slog.LevelDebug)
 
 	if err != nil {
 		log.Fatalln(err)
@@ -38,7 +35,7 @@ func main() {
 	pspWithCircuitBreaker, isPspCircuitOpen := resilience.CreateCircuitBreaker(
 		20,
 		psp.SendOutboxEventToPspFake,
-		func(output psp.PspOutput) bool { return output.Http.HttpStatusCode >= 500 },
+		func(output psp.PspOutput) bool { return output.HttpResponse.StatusCode >= 500 },
 	)
 
 	go func() {

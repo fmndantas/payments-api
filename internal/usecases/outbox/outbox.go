@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -93,7 +94,7 @@ func ProcessOutboxEvents(
 		return nil
 	}
 
-	log.Println("processing outbox events")
+	slog.Info("processing a batch of outbox events", "token", lockToken, "size", batchSize)
 
 	tx, err := tree.DbPool.Begin(context)
 
@@ -121,7 +122,12 @@ func ProcessOutboxEvents(
 		return err
 	}
 
-	log.Printf("outbox events were successfully reserved. number of events: %d\n", tag.RowsAffected())
+	slog.Info("outbox events were reserved", "amount", tag.RowsAffected())
+
+	if tag.RowsAffected() == 0 {
+		slog.Info("there's no outbox events for processing. stopping early")
+		return nil
+	}
 
 	outboxEventsRows, err := tree.DbPool.Query(context, getOutboxEventsByLockToken, lockToken)
 
@@ -141,33 +147,55 @@ func ProcessOutboxEvents(
 		unreservationErrors       error
 	)
 
+	slog.Info("processing reserved batch", "amount", len(outboxEvents))
+
 	// TODO: paralellize
 	shouldUnreserveBatch := false
 	for _, outboxEvent := range outboxEvents {
-		breakerResult := sendToPsp(nowReference, psp.PspInput{Context: context, Outbox: outboxEvent})
-		if breakerResult.IsOpen() {
-			log.Printf("circuit breaker tripped")
+		slog.Info("processing outbox event", "id", outboxEvent.Id)
+		pspOutput := sendToPsp(nowReference, psp.PspInput{Context: context, Outbox: outboxEvent})
+		if pspOutput.IsOpen() {
+			slog.Error("circuit breaker tripped")
 			shouldUnreserveBatch = true
 			break
 		} else {
+			var (
+				pspHttp  = pspOutput.RequestResult.HttpResponse
+				pspError = pspOutput.RequestResult.Error
+			)
+			slog.Info(
+				"send to psp",
+				"status_code", pspHttp.StatusCode,
+				"json_body", pspHttp.JsonBody,
+			)
+			if pspError != nil {
+				slog.Info(
+					"send to psp",
+					"error", pspError.Error(),
+				)
+			}
 			persistenceError := persistEventUpdate(
 				context,
 				tree,
 				outboxEvent,
-				breakerResult.RequestResult.Http,
-				breakerResult.RequestResult.Error,
+				pspOutput.RequestResult.HttpResponse,
+				pspOutput.RequestResult.Error,
 				lockToken,
 				nowReference,
 				decideNextErrorStatus,
 			)
 			if persistenceError != nil {
+				slog.Error("error when persisting outbox update", "id", outboxEvent.Id, "error", persistenceError.Error())
 				numberOfPersistenceErrors++
 				persistenceErrors = errors.Join(persistenceError, persistenceErrors)
+			} else {
+				slog.Info("outbox update was persisted", "id", outboxEvent.Id)
 			}
 		}
 	}
 
 	if shouldUnreserveBatch {
+		slog.Info("batch will be unreserved")
 		tx, err := tree.DbPool.Begin(context)
 		unreservationErrors = errors.Join(unreservationErrors, err)
 		tag, err = tx.Exec(
@@ -176,6 +204,9 @@ func ProcessOutboxEvents(
 			lockToken,
 		)
 		unreservationErrors = errors.Join(unreservationErrors, err)
+		if err != nil {
+			slog.Error("an error occurred when the batch was unreserved", "error", err.Error())
+		}
 		if err = tx.Commit(context); err != nil {
 			unreservationErrors = errors.Join(unreservationErrors, err)
 			tx.Rollback(context)
@@ -210,7 +241,7 @@ func persistEventUpdate(
 		return markEventAsErrored(context, tree, event, pspError, lockToken, nowReference, decideNextErrorStatus)
 	}
 
-	if pspResponse.HttpStatusCode >= 400 {
+	if pspResponse.StatusCode >= 400 {
 		var pspErrorPayload PspErrorPayload
 		unmarshalError := json.Unmarshal([]byte(pspResponse.JsonBody), &pspErrorPayload)
 		if unmarshalError != nil {
@@ -223,7 +254,7 @@ func persistEventUpdate(
 			event,
 			fmt.Errorf(
 				"{ \"http_status_code\": %d, \"error\": \"%s\" }",
-				pspResponse.HttpStatusCode,
+				pspResponse.StatusCode,
 				pspErrorPayload.Error,
 			),
 			lockToken,
@@ -264,17 +295,30 @@ func markEventAsErrored(
 	decideNextErrorStatus DecideNextErrorStatusFn,
 ) error {
 	tx, txErr := tree.DbPool.Begin(context)
+
 	if txErr != nil {
 		return txErr
 	}
 
 	defer tx.Rollback(context)
 
+	var (
+		nextErrorStatus = decideNextErrorStatus(event.AttemptCount)
+		nextTryAt       = nowReference.Add(GetNextTryAt(event.AttemptCount))
+	)
+
+	slog.Info(
+		"marking outbox as an error",
+		"id", event.Id,
+		"status", nextErrorStatus,
+		"next_try_at", nextTryAt,
+	)
+
 	tag, txErr := tx.Exec(
 		context,
 		markOutboxEventAsRetryCommand,
-		nowReference.Add(GetNextTryAt(event.AttemptCount)),
-		decideNextErrorStatus(event.AttemptCount),
+		nextTryAt,
+		nextErrorStatus,
 		eventError.Error(),
 		nowReference,
 		event.Id,
@@ -320,6 +364,12 @@ func markEventAsSuccessful(
 	}
 
 	defer tx.Rollback(context)
+
+	slog.Info(
+		"marking outbox as success",
+		"id", event.Id,
+		"status", eventstatus.Success,
+	)
 
 	_, err := tx.Exec(
 		context,

@@ -16,7 +16,7 @@ type DoRequest[U any, T any] = func(U) T
 type CircuitBreakerInfo[T any] struct {
 	status        CircuitBreakerStatus
 	OpenUntil     *time.Time
-	RequestResult *T
+	RequestResult T
 }
 
 func (info *CircuitBreakerInfo[T]) IsClosed() bool {
@@ -49,6 +49,7 @@ func CreateCircuitBreaker[U any, T any](
 	var (
 		currentNumberOfErrors = 0
 		currentInfo           = &CircuitBreakerInfo[T]{status: closed, OpenUntil: nil}
+		zeroT                 T
 	)
 
 	isOpen := func(nowReference time.Time) bool {
@@ -68,20 +69,20 @@ func CreateCircuitBreaker[U any, T any](
 				currentInfo = &CircuitBreakerInfo[T]{
 					status:        open,
 					OpenUntil:     getNextOpenUntil(nowReference),
-					RequestResult: nil,
+					RequestResult: zeroT,
 				}
 			} else if currentInfo.IsHalfOpen(nowReference) && requestIsErrored {
 				currentNumberOfErrors = 0
 				currentInfo = &CircuitBreakerInfo[T]{
 					status:        open,
 					OpenUntil:     getNextOpenUntil(nowReference),
-					RequestResult: nil,
+					RequestResult: zeroT,
 				}
 			} else {
 				currentInfo = &CircuitBreakerInfo[T]{
 					status:        closed,
 					OpenUntil:     nil,
-					RequestResult: &requestResponse,
+					RequestResult: requestResponse,
 				}
 			}
 		}

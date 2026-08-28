@@ -63,9 +63,9 @@ func TestMain(m *testing.M) {
 
 func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) (outbox.SendToPsp, func(time.Time) bool) {
 	doRequest := func(_ psp.PspInput) psp.PspOutput {
-		return psp.PspOutput{Http: psp.PspHttpResponse{
-			HttpStatusCode: 202,
-			JsonBody:       fmt.Sprintf("{ \"id_psp_payment\": \"%s\" }", idPspPayment.String()),
+		return psp.PspOutput{HttpResponse: psp.PspHttpResponse{
+			StatusCode: 202,
+			JsonBody:   fmt.Sprintf("{ \"id_psp_payment\": \"%s\" }", idPspPayment.String()),
 		}}
 	}
 	return resilience.CreateCircuitBreaker(
@@ -77,9 +77,9 @@ func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) (outbox.SendToPsp, 
 
 func sendOutboxEventToPspFakeServerError() (outbox.SendToPsp, func(time.Time) bool) {
 	doRequest := func(_ psp.PspInput) psp.PspOutput {
-		return psp.PspOutput{Http: psp.PspHttpResponse{
-			HttpStatusCode: 500,
-			JsonBody:       "{ \"error\": \"the server couldn't process the request\" }",
+		return psp.PspOutput{HttpResponse: psp.PspHttpResponse{
+			StatusCode: 500,
+			JsonBody:   "{ \"error\": \"the server couldn't process the request\" }",
 		}}
 	}
 	return resilience.CreateCircuitBreaker(
@@ -343,9 +343,9 @@ func TestProcessOutboxEventsWithCircuitBreaker(t *testing.T) {
 		require.NoError(t, err, "checkout")
 	}
 	doRequest := func(_ psp.PspInput) psp.PspOutput {
-		return psp.PspOutput{Http: psp.PspHttpResponse{
-			HttpStatusCode: 500,
-			JsonBody:       "{ \"error\": \"the server couldn't process the request\" }",
+		return psp.PspOutput{HttpResponse: psp.PspHttpResponse{
+			StatusCode: 500,
+			JsonBody:   "{ \"error\": \"the server couldn't process the request\" }",
 		}}
 	}
 	sendToPsp, isOpen := resilience.CreateCircuitBreaker(
