@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"log"
-	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/fmndantas/payments/internal"
 	"github.com/fmndantas/payments/internal/db"
 	"github.com/fmndantas/payments/internal/dependencies"
 	"github.com/fmndantas/payments/internal/psp"
@@ -21,16 +21,17 @@ func main() {
 	dbConfiguration := db.CreateLocalConfiguration()
 	tree, err := dependencies.Initialize(dbConfiguration)
 
-	slog.SetLogLoggerLevel(slog.LevelDebug)
-
 	if err != nil {
 		log.Fatalln(err)
 		return
 	}
 
-	context := context.Background()
+	internal.ConfigureLogLevel()
 
-	ch := make(chan error)
+	var (
+		context = context.Background()
+		ch      = make(chan error)
+	)
 
 	pspWithCircuitBreaker, isPspCircuitOpen := resilience.CreateCircuitBreaker(
 		20,
