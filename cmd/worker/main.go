@@ -36,7 +36,9 @@ func main() {
 	pspWithCircuitBreaker, isPspCircuitOpen := resilience.CreateCircuitBreaker(
 		20,
 		psp.SendOutboxEventToPspFake,
-		func(output psp.PspOutput) bool { return output.HttpResponse.StatusCode >= 500 },
+		func(output psp.PspOutput) bool {
+			return output.HttpResponse.StatusCode >= 500 && output.Error != nil
+		},
 	)
 
 	go func() {
