@@ -347,7 +347,7 @@ func TestProcessOutboxEventsGetEventsWithExpiredLock(t *testing.T) {
 	require.NoError(t, err)
 	tx, err := tree.DbPool.Begin(ctx)
 	require.NoError(t, err)
-	// save event in a reserved state, simulating a scenario where a previous processing failed to unreserve the event
+	// save event in a reserved state, simulating a scenario where a worker failed to unreserve the event
 	lockToken := uuid.New()
 	_, err = tx.Exec(ctx, "update outbox set locked_until = $1, lock_token = $2 where true", now, lockToken)
 	require.NoError(t, err)
@@ -366,6 +366,71 @@ func TestProcessOutboxEventsGetEventsWithExpiredLock(t *testing.T) {
 	outboxEvent := outboxEvents[0]
 	assert.Equal(t, 1, outboxEvent.AttemptCount, "outbox.attempt_count")
 	assert.Equal(t, eventstatus.Success.String(), outboxEvent.Status, "outbox.status")
+}
+
+func TestMarkEventAsErroredDontProcessEventWithLockTokenDifferentThanTheExpected(t *testing.T) {
+	// arrange
+	var (
+		ctx = context.Background()
+		now = time.Now()
+	)
+	require.NoError(t, resetDbState(ctx, tree))
+	_, err := checkout.HandleCheckout(
+		tree,
+		ctx,
+		uuid.New(),
+		test.IdSourceAccountAsUuid(),
+		test.IdDestinyAccountAsUuid(),
+		now,
+	)
+	require.NoError(t, err)
+	tx, err := tree.DbPool.Begin(ctx)
+	require.NoError(t, err)
+	// this is when worker B reserves an event with expired reservation
+	_, err = tx.Exec(ctx, "update outbox set locked_until = $1, lock_token = $2 where true", now, uuid.New())
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+	// act
+	// and this is when worker A resumes and tries to process the original event
+	err = outbox.MarkEventAsErrored(ctx, tree, db.Outbox{}, fmt.Errorf("any error"), uuid.New(), now, eventIsErroredWithOneAttempt)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "number of affected rows (outbox table) != 1")
+}
+
+func TestMarkEventAsSuccessDontProcessEventWithLockTokenDifferentThanTheExpected(t *testing.T) {
+	// arrange
+	var (
+		ctx = context.Background()
+		now = time.Now()
+	)
+	require.NoError(t, resetDbState(ctx, tree))
+	_, err := checkout.HandleCheckout(
+		tree,
+		ctx,
+		uuid.New(),
+		test.IdSourceAccountAsUuid(),
+		test.IdDestinyAccountAsUuid(),
+		now,
+	)
+	require.NoError(t, err)
+	tx, err := tree.DbPool.Begin(ctx)
+	require.NoError(t, err)
+	// this is when worker B reserves an event with expired reservation
+	_, err = tx.Exec(ctx, "update outbox set locked_until = $1, lock_token = $2 where true", now, uuid.New())
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+	// act
+	// and this is when worker A resumes and tries to process the original event
+	err = outbox.MarkEventAsSuccessful(
+		ctx,
+		tree,
+		psp.PspHttpResponse{StatusCode: 202, JsonBody: fmt.Sprintf("{ \"id_psp_payment\": \"%s\" }", uuid.New())},
+		db.Outbox{},
+		uuid.New(),
+		now,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "number of affected rows (outbox table) != 1")
 }
 
 func TestProcessOutboxEventsWithCircuitBreaker(t *testing.T) {

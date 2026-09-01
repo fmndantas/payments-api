@@ -233,21 +233,21 @@ func persistEventUpdate(
 	decideNextErrorStatus DecideNextErrorStatusFn,
 ) error {
 	if context.Err() != nil {
-		return markEventAsErrored(context, tree, event, context.Err(), lockToken, nowReference, decideNextErrorStatus)
+		return MarkEventAsErrored(context, tree, event, context.Err(), lockToken, nowReference, decideNextErrorStatus)
 	}
 
 	if pspError != nil {
-		return markEventAsErrored(context, tree, event, pspError, lockToken, nowReference, decideNextErrorStatus)
+		return MarkEventAsErrored(context, tree, event, pspError, lockToken, nowReference, decideNextErrorStatus)
 	}
 
 	if pspResponse.StatusCode >= 400 {
 		var pspErrorPayload PspErrorPayload
 		unmarshalError := json.Unmarshal([]byte(pspResponse.JsonBody), &pspErrorPayload)
 		if unmarshalError != nil {
-			return markEventAsErrored(context, tree, event, unmarshalError, lockToken, nowReference, decideNextErrorStatus)
+			return MarkEventAsErrored(context, tree, event, unmarshalError, lockToken, nowReference, decideNextErrorStatus)
 		}
 
-		return markEventAsErrored(
+		return MarkEventAsErrored(
 			context,
 			tree,
 			event,
@@ -262,7 +262,7 @@ func persistEventUpdate(
 		)
 	}
 
-	return markEventAsSuccessful(context, tree, pspResponse, event, lockToken, nowReference)
+	return MarkEventAsSuccessful(context, tree, pspResponse, event, lockToken, nowReference)
 }
 
 func GetNextTryAt(attemptCount int) time.Duration {
@@ -284,7 +284,7 @@ func GetNextTryAt(attemptCount int) time.Duration {
 	return waitTime * time.Second
 }
 
-func markEventAsErrored(
+func MarkEventAsErrored(
 	context context.Context,
 	tree *dependencies.Tree,
 	event db.Outbox,
@@ -293,6 +293,10 @@ func markEventAsErrored(
 	nowReference time.Time,
 	decideNextErrorStatus DecideNextErrorStatusFn,
 ) error {
+	if eventError == nil {
+		return fmt.Errorf("event %d was marked for error, but the parameter `eventError` is nil", event.Id)
+	}
+
 	tx, txErr := tree.DbPool.Begin(context)
 
 	if txErr != nil {
@@ -329,8 +333,7 @@ func markEventAsErrored(
 	}
 
 	if tag.RowsAffected() != 1 {
-		tx.Rollback(context)
-		return fmt.Errorf("number of rows affected by mark was error was != 1: %d", tag.RowsAffected())
+		return fmt.Errorf("number of affected rows (outbox table) != 1 (%d)", tag.RowsAffected())
 	}
 
 	if txErr = tx.Commit(context); txErr != nil {
@@ -348,7 +351,7 @@ type PspErrorPayload struct {
 	Error string `json:"error" binding:"required"`
 }
 
-func markEventAsSuccessful(
+func MarkEventAsSuccessful(
 	context context.Context,
 	tree *dependencies.Tree,
 	pspHttpResponse psp.PspHttpResponse,
@@ -370,7 +373,7 @@ func markEventAsSuccessful(
 		"status", eventstatus.Success,
 	)
 
-	_, err := tx.Exec(
+	tag, err := tx.Exec(
 		context,
 		markOutboxEventAsSuccessCommand,
 		eventstatus.Success,
@@ -384,10 +387,12 @@ func markEventAsSuccessful(
 		return err
 	}
 
-	var pspSuccessPayload PspSuccessPayload
-	err = json.Unmarshal([]byte(pspHttpResponse.JsonBody), &pspSuccessPayload)
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("number of affected rows (outbox table) != 1 (%d)", tag.RowsAffected())
+	}
 
-	if err != nil {
+	var pspSuccessPayload PspSuccessPayload
+	if err = json.Unmarshal([]byte(pspHttpResponse.JsonBody), &pspSuccessPayload); err != nil {
 		return err
 	}
 
