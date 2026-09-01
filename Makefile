@@ -6,5 +6,5 @@ api:
 worker:
 	LOG_LEVEL=$(LOG_LEVEL) go run ./cmd/worker/main.go
 
-test:
+tests:
 	go test ./...
