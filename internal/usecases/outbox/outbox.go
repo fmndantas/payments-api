@@ -26,9 +26,8 @@ var reserveOutboxEventsCommand = `
 with selected_outbox_events as (
 	select id from outbox
 	where status != all($5)
-	and locked_until is null
-	and lock_token is null 
-	and next_try_at < $1
+	and next_try_at <= $1
+	and (locked_until is null or locked_until <= $1)
 	order by id
 	limit $2
 	for update skip locked

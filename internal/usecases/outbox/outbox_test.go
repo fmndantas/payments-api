@@ -329,6 +329,45 @@ func TestProcessOutboxEventsDoesNotGetEventsWithFinalStates(t *testing.T) {
 	assert.Equal(t, 1, outboxEvent.AttemptCount, "outbox.attempt_count")
 }
 
+func TestProcessOutboxEventsGetEventsWithExpiredLock(t *testing.T) {
+	// arrange
+	var (
+		ctx = context.Background()
+		now = time.Now()
+	)
+	require.NoError(t, resetDbState(ctx, tree))
+	_, err := checkout.HandleCheckout(
+		tree,
+		ctx,
+		uuid.New(),
+		test.IdSourceAccountAsUuid(),
+		test.IdDestinyAccountAsUuid(),
+		now,
+	)
+	require.NoError(t, err)
+	tx, err := tree.DbPool.Begin(ctx)
+	require.NoError(t, err)
+	// save event in a reserved state, simulating a scenario where a previous processing failed to unreserve the event
+	lockToken := uuid.New()
+	_, err = tx.Exec(ctx, "update outbox set locked_until = $1, lock_token = $2 where true", now, lockToken)
+	require.NoError(t, err)
+	err = tx.Commit(ctx)
+	require.NoError(t, err)
+	sendToPsp, isOpen := sendOutboxEventToPspFakeSuccess(uuid.New())
+	// act
+	err = outbox.ProcessOutboxEvents(ctx, tree, now.Add(time.Minute), 1, lockToken, isOpen, sendToPsp, eventIsErroredWithTwoAttempts)
+	require.NoError(t, err)
+	// assert
+	rows, err := tree.DbPool.Query(ctx, "select * from outbox")
+	require.NoError(t, err)
+	outboxEvents, err := pgx.CollectRows(rows, pgx.RowToStructByName[db.Outbox])
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(outboxEvents))
+	outboxEvent := outboxEvents[0]
+	assert.Equal(t, 1, outboxEvent.AttemptCount, "outbox.attempt_count")
+	assert.Equal(t, eventstatus.Success.String(), outboxEvent.Status, "outbox.status")
+}
+
 func TestProcessOutboxEventsWithCircuitBreaker(t *testing.T) {
 	// arrange
 	var (
