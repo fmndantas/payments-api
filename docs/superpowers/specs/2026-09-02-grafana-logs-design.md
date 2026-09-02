@@ -38,19 +38,19 @@ The application owns local log-file creation. Promtail is the log collector and 
 - Set the default `slog` logger to a JSON handler writing to both the selected file and stderr. Local terminal visibility is therefore retained while Promtail consumes the file.
 - Each entry is one JSON object per line, allowing Promtail and Loki to parse structured fields without regex parsing.
 
-`Makefile` will expose the existing `LOG_LEVEL` and add an overridable `LOG_DIR` defaulting to `logs`. The API and worker targets pass the correct `LOG_FILE` values.
+`Makefile` will expose the existing `LOG_LEVEL` environment variable and add an overridable `LOG_DIR` Make variable defaulting to `logs`. The API and worker targets derive and pass the correct `LOG_FILE` environment-variable values.
 
 The separate files are intentional: they produce the stable `service=api` and `service=worker` labels without relying on message content or a process-specific code change.
 
-## Docker Compose Services
+## Observability Compose Services
 
-The existing `docker-compose.yml` will retain Postgres and add:
+The existing `docker-compose.yml` remains limited to Postgres. A separate `docker-compose.observability.yml` defines:
 
 - **Loki:** local single-node log store with persistent local storage and a development-appropriate retention configuration.
 - **Promtail:** mounts `./logs` read-only and its position file persistently; tails both JSON log files and pushes batches to Loki.
 - **Grafana:** exposed on port 3000 with its data directory persisted and the Loki data source provisioned at startup.
 
-All services use Compose's default network. Loki's HTTP endpoint is internal to the Compose network; Grafana and Promtail reach it by the `loki` service name.
+The observability services use their Compose file's default network. Loki's HTTP endpoint is internal to that network; Grafana and Promtail reach it by the `loki` service name. Promtail receives application logs through its `./logs` bind mount, so it does not require a network connection to Postgres or the locally running application.
 
 ## Promtail Labels and Parsing
 
@@ -85,7 +85,7 @@ The initial implementation provisions the data source only. Users can create das
 
 ## Verification
 
-1. Run `docker compose up -d` and confirm Postgres, Loki, Promtail, and Grafana are healthy.
+1. Run `docker compose -f docker-compose.observability.yml up -d` and confirm Loki, Promtail, and Grafana are healthy.
 2. Run `make api`, request `GET /health`, and confirm JSON lines appear in `logs/api.log`.
 3. Run `make worker` and confirm JSON lines appear in `logs/worker.log`.
 4. Open Grafana at `http://localhost:3000`, select Explore, and query `{service="api"}` and `{service="worker"}`.
@@ -93,6 +93,7 @@ The initial implementation provisions the data source only. Users can create das
 
 ## Files Affected
 
-- Modify: `internal/configuration.go`, `Makefile`, `docker-compose.yml`.
+- Modify: `internal/configuration.go`, `Makefile`.
+- Add: `docker-compose.observability.yml` for Loki, Promtail, and Grafana; retain the existing `docker-compose.yml` for Postgres.
 - Add: Loki, Promtail, and Grafana provisioning configuration under `deploy/`.
 - Add: `.gitignore` entry for `logs/`.
