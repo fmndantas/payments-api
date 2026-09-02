@@ -26,7 +26,7 @@ make api      -> logs/api.log    -> Promtail -> Loki -> Grafana
 make worker   -> logs/worker.log -> Promtail -> Loki -> Grafana
 ```
 
-The application owns local log-file creation. Promtail is the only component that communicates with Loki, preserving the application's independence from the observability backend.
+The application owns local log-file creation. Promtail is the log collector and shipper: it tails the files, applies labels, and sends batches to Loki. Loki is the log database: it receives, stores, indexes, and serves log entries to Grafana. Promtail is the only component that communicates with Loki, preserving the application's independence from the observability backend.
 
 ## Application Logging
 
