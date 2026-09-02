@@ -2,7 +2,7 @@ package main
 
 import (
 	"log"
-	"log/slog"
+	"os"
 
 	"github.com/gin-gonic/gin"
 
@@ -23,8 +23,6 @@ func Initialize(dbConfiguration db.DbConfiguration, testMode bool) (*gin.Engine,
 		gin.SetMode(gin.TestMode)
 	}
 
-	internal.ConfigureLogLevel()
-
 	gin.DisableConsoleColor()
 
 	router := gin.Default()
@@ -34,11 +32,19 @@ func Initialize(dbConfiguration db.DbConfiguration, testMode bool) (*gin.Engine,
 }
 
 func main() {
+	logFile, err := internal.ConfigureLogLevelToFileAndStderr(
+		os.Getenv("LOG_FILE"), os.Getenv("LOG_LEVEL"), os.Stderr,
+	)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer logFile.Close()
+
 	// FIX: get this from env
 	dbConfiguration := db.CreateLocalConfiguration()
 	router, err := Initialize(dbConfiguration, false)
-
-	slog.SetLogLoggerLevel(slog.LevelDebug)
 
 	if err != nil {
 		log.Fatalln(err)

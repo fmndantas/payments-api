@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,16 @@ import (
 
 // TODO: graceful shutdown?
 func main() {
+	logFile, err := internal.ConfigureLogLevelToFileAndStderr(
+		os.Getenv("LOG_FILE"), os.Getenv("LOG_LEVEL"), os.Stderr,
+	)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer logFile.Close()
+
 	// FIX: get this from env
 	dbConfiguration := db.CreateLocalConfiguration()
 	tree, err := dependencies.Initialize(dbConfiguration)
@@ -25,8 +36,6 @@ func main() {
 		log.Fatalln(err)
 		return
 	}
-
-	internal.ConfigureLogLevel()
 
 	var (
 		context = context.Background()

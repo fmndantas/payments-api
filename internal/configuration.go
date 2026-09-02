@@ -1,21 +1,33 @@
 package internal
 
 import (
-	"os"
-	"strings"
+	"fmt"
+	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
-func ConfigureLogLevel() {
-	logLevel := os.Getenv("LOG_LEVEL")
+func ConfigureLogLevelToFileAndStderr(logFilePath, logLevel string, stderr io.Writer) (io.Closer, error) {
+	if err := os.MkdirAll(filepath.Dir(logFilePath), 0o755); err != nil {
+		return nil, fmt.Errorf("create log directory, %w", err)
+	}
+
+	file, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open log file: %w", err)
+	}
+
+	level := slog.LevelError
 	switch strings.ToLower(logLevel) {
 	case "debug":
-		slog.SetLogLoggerLevel(slog.LevelDebug)
+		level = slog.LevelDebug
 	case "info":
-		slog.SetLogLoggerLevel(slog.LevelInfo)
-	case "error":
-		slog.SetLogLoggerLevel(slog.LevelError)
-	default:
-		slog.SetLogLoggerLevel(slog.LevelError)
+		level = slog.LevelInfo
 	}
+
+	handler := slog.NewJSONHandler(io.MultiWriter(file, stderr), &slog.HandlerOptions{Level: level})
+	slog.SetDefault(slog.New(handler))
+	return file, nil
 }
