@@ -46,7 +46,7 @@ func main() {
 		20,
 		psp.SendOutboxEventToPspFake,
 		func(output psp.PspOutput) bool {
-			return output.HttpResponse.StatusCode >= 500 && output.Error != nil
+			return output.HttpResponse.StatusCode >= 500 || output.Error != nil
 		},
 	)
 
