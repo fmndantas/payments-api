@@ -1,0 +1,49 @@
+# Expose Promtail's optional HTTP status/metrics endpoint and disable its unused gRPC server.
+server:
+  http_listen_port: 9800
+  grpc_listen_port: 0
+
+# Persist the last byte offset read from each file so restarts do not resend old lines.
+positions:
+  filename: /tmp/positions/positions.yaml
+
+# Send collected log entries to the Loki service over the Docker Compose network.
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+# Define one file-scraping job per local application process.
+scrape_configs:
+  # Tail API logs and attach stable, low-cardinality stream labels.
+  - job_name: payments-api
+    static_configs:
+      # Static file targets require a placeholder target; Promtail does not connect to localhost.
+      - targets: [localhost]
+        labels:
+          # These labels identify the log stream in Grafana queries.
+          service: api
+          environment: dev
+          # This is the API log-file path inside the Promtail container.
+          __path__: /var/log/payments/api.log
+    pipeline_stages:
+      # Parse each JSON log line so its fields can be queried with LogQL's json parser.
+      - json:
+          expressions:
+            # Empty values extract same-named fields without promoting them to labels.
+            level:
+            msg:
+
+  # Tail worker logs with a distinct service label.
+  - job_name: payments-worker
+    static_configs:
+      - targets: [localhost]
+        labels:
+          service: worker
+          environment: dev
+          # This is the worker log-file path inside the Promtail container.
+          __path__: /var/log/payments/worker.log
+    pipeline_stages:
+      - json:
+          expressions:
+            # Keep per-entry fields in the payload to avoid high-cardinality labels.
+            level:
+            msg:
