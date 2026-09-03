@@ -27,7 +27,11 @@ func ConfigureLogLevelToFileAndStderr(logFilePath, logLevel string, stderr io.Wr
 		level = slog.LevelInfo
 	}
 
-	handler := slog.NewJSONHandler(io.MultiWriter(file, stderr), &slog.HandlerOptions{Level: level})
+	var (
+		fileHandler   = slog.NewJSONHandler(io.MultiWriter(file), &slog.HandlerOptions{Level: level})
+		stdErrHandler = slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})
+	)
+	handler := slog.NewMultiHandler(fileHandler, stdErrHandler)
 	slog.SetDefault(slog.New(handler))
 	return file, nil
 }
