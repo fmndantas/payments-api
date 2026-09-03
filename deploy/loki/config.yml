@@ -1,0 +1,54 @@
+# Disable multi-tenant authentication for this single local development instance.
+auth_enabled: false
+
+# Expose Loki's HTTP API to Promtail and Grafana on the default Loki port.
+server:
+  http_listen_port: 3100
+
+# Shared single-node storage and ring settings.
+common:
+  # Base directory for all Loki data inside the container.
+  path_prefix: /loki
+  # Keep one copy of each log chunk because this local setup has one Loki instance.
+  replication_factor: 1
+  ring:
+    # Store single-node coordination state in memory; no external KV store is needed.
+    kvstore:
+      store: inmemory
+  storage:
+    filesystem:
+      # Persist compressed log chunks and any alert/recording rule files locally.
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+
+# Define the on-disk index and chunk format for logs from the given date onward.
+schema_config:
+  configs:
+    # The date is in the past so this schema applies to all local log entries.
+    - from: 2024-01-01
+      # Use Loki's TSDB index backed by the local filesystem.
+      store: tsdb
+      object_store: filesystem
+      # Use schema version 13 with one index period per day.
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+# Compact index files and remove logs after their retention period.
+compactor:
+  # Keep compaction scratch data and retention markers on the persistent Loki volume.
+  working_directory: /loki/compactor
+  # Enable retention processing.
+  retention_enabled: true
+  # Store delete-request metadata on the same local filesystem backend.
+  delete_request_store: filesystem
+
+# Apply this retention period to every stream in this local Loki instance.
+limits_config:
+  # Keep logs for seven days (168 hours).
+  retention_period: 168h
+
+# Do not send anonymous usage reports from the local development stack.
+analytics:
+  reporting_enabled: false
