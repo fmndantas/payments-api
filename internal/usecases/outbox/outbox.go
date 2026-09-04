@@ -95,15 +95,15 @@ func ProcessOutboxEvents(
 
 	slog.Info("processing a batch of outbox events", "token", lockToken, "size", batchSize)
 
-	tx, unreserveErr := tree.DbPool.Begin(context)
+	tx, err := tree.DbPool.Begin(context)
 
-	if unreserveErr != nil {
-		return unreserveErr
+	if err != nil {
+		return err
 	}
 
 	defer tx.Rollback(context)
 
-	tag, unreserveErr := tx.Exec(
+	tag, err := tx.Exec(
 		context,
 		reserveOutboxEventsCommand,
 		nowReference,
@@ -113,12 +113,12 @@ func ProcessOutboxEvents(
 		[]OutboxStatus{eventstatus.Errored, eventstatus.Success},
 	)
 
-	if unreserveErr != nil {
-		return unreserveErr
+	if err != nil {
+		return err
 	}
 
-	if unreserveErr = tx.Commit(context); unreserveErr != nil {
-		return unreserveErr
+	if err = tx.Commit(context); err != nil {
+		return err
 	}
 
 	slog.Info("outbox events were reserved", "amount", tag.RowsAffected())
@@ -128,22 +128,26 @@ func ProcessOutboxEvents(
 		return nil
 	}
 
-	outboxEventsRows, unreserveErr := tree.DbPool.Query(context, getOutboxEventsByLockToken, lockToken)
+	outboxEventsRows, err := tree.DbPool.Query(context, getOutboxEventsByLockToken, lockToken)
 
-	if unreserveErr != nil {
-		return unreserveErr
+	if err != nil {
+		return err
 	}
 
-	outboxEvents, unreserveErr := pgx.CollectRows(outboxEventsRows, pgx.RowToStructByName[db.Outbox])
+	outboxEvents, err := pgx.CollectRows(outboxEventsRows, pgx.RowToStructByName[db.Outbox])
 
-	if unreserveErr != nil {
-		return unreserveErr
+	if err != nil {
+		return err
 	}
 
 	var (
-		processingErrors     error
+		errs                 error
 		shouldUnreserveBatch = false
 	)
+
+	handleErr := func(e error) {
+		errs = errors.Join(errs, e)
+	}
 
 	slog.Info("processing reserved batch", "amount", len(outboxEvents))
 
@@ -167,6 +171,7 @@ func ProcessOutboxEvents(
 				"status_code", pspHttp.StatusCode,
 				"json_body", pspHttp.JsonBody,
 			)
+
 			if pspError != nil {
 				slog.Info(
 					"send to psp",
@@ -187,7 +192,7 @@ func ProcessOutboxEvents(
 
 			if persistenceError != nil {
 				slog.Error("error when persisting outbox update", "id", outboxEvent.Id, "error", persistenceError.Error())
-				processingErrors = errors.Join(persistenceError, processingErrors)
+				handleErr(persistenceError)
 			} else {
 				slog.Info("outbox update was persisted", "id", outboxEvent.Id)
 			}
@@ -195,37 +200,37 @@ func ProcessOutboxEvents(
 	}
 
 	if !shouldUnreserveBatch {
-		return processingErrors
+		return errs
 	}
 
 	slog.Info("batch will be unreserved")
 
 	tx, txErr := tree.DbPool.Begin(context)
-	processingErrors = errors.Join(processingErrors, txErr)
+	handleErr(txErr)
 
 	if txErr != nil {
-		return processingErrors
+		return errs
 	}
 
 	defer tx.Rollback(context)
 
-	_, unreserveErr = tx.Exec(
+	_, unreserveErr := tx.Exec(
 		context,
 		"update outbox set lock_token = null, locked_until = null where lock_token = $1",
 		lockToken,
 	)
-	processingErrors = errors.Join(processingErrors, unreserveErr)
+	handleErr(unreserveErr)
 
 	if unreserveErr != nil {
 		slog.Error("an error occurred when the batch was unreserved", "error", unreserveErr.Error())
-		return processingErrors
+		return errs
 	}
 
 	if commitErr := tx.Commit(context); commitErr != nil {
-		processingErrors = errors.Join(processingErrors, commitErr)
+		handleErr(commitErr)
 	}
 
-	return processingErrors
+	return errs
 }
 
 func EventIsErroredWithFiveAttempts(currentAttemptCount int) OutboxStatus {
