@@ -38,7 +38,7 @@ func Initialize(dbConfiguration db.DbConfiguration) (*Tree, error) {
 	config, err := pgxpool.ParseConfig(dbConfiguration.Dsn())
 
 	if err != nil {
-		return nil, fmt.Errorf("unable to parse pool configuration: %s", err)
+		return nil, fmt.Errorf("unable to parse pool configuration: %w", err)
 	}
 
 	config.ConnConfig.Tracer = slogQueryTracer{}
@@ -46,11 +46,11 @@ func Initialize(dbConfiguration db.DbConfiguration) (*Tree, error) {
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 
 	if err != nil {
-		return nil, fmt.Errorf("unable to connect to database: %s", err)
+		return nil, fmt.Errorf("unable to connect to database: %w", err)
 	}
 
 	if err := pool.Ping(ctx); err != nil {
-		return nil, fmt.Errorf("unable to ping database: %s", err)
+		return nil, fmt.Errorf("unable to ping database: %w", err)
 	}
 
 	slog.Info("connected to database successfully", "dsn", dbConfiguration.Dsn())

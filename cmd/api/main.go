@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"log/slog"
 	"os"
 
 	"github.com/gin-gonic/gin"
@@ -47,8 +48,8 @@ func main() {
 	router, err := Initialize(dbConfiguration, false)
 
 	if err != nil {
-		log.Fatalln(err)
-		return
+		slog.Error("initialize dependencies", "error", err)
+		os.Exit(1)
 	}
 
 	router.Run("localhost:8080")

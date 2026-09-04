@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -33,8 +34,8 @@ func main() {
 	tree, err := dependencies.Initialize(dbConfiguration)
 
 	if err != nil {
-		log.Fatalln(err)
-		return
+		slog.Error("initialize dependencies", "error", err)
+		os.Exit(1)
 	}
 
 	var (
@@ -67,7 +68,7 @@ func main() {
 
 	for err := range ch {
 		if err != nil {
-			log.Println(err)
+			slog.Error("process outbox", "error", err)
 		}
 	}
 }
