@@ -1,6 +1,7 @@
 package resilience_test
 
 import (
+	"fmt"
 	"math/rand/v2"
 	"testing"
 	"time"
@@ -98,4 +99,49 @@ func TestIfSuccessResetsErrorCounting(t *testing.T) {
 	requestFails = true
 	fail := breaker(time.Now(), anyInput)
 	assert.True(t, fail.IsClosed())
+}
+
+/*
+Start two requests while circuit is closed;
+block both inside doRequest with channels.
+Release failing request first so it opens circuit, then release successful request;
+assert breaker remains open, because second request was authorized from stale state.
+*/
+func TestCheckConcurrencyProtectionA(t *testing.T) {
+	// arrange
+	var (
+		now             = time.Now()
+		sync            = make(chan bool, 2)
+		requestReleases = make(map[int]chan bool)
+		requestFails    = false
+		breakerCh       = make(chan *resilience.CircuitBreakerInfo[int], 2)
+	)
+	requestReleases[1], requestReleases[2] = make(chan bool), make(chan bool)
+	doRequest := func(id int) int {
+		sync <- true
+		fmt.Printf("%d: waiting release\n", id)
+		<-requestReleases[id]
+		fmt.Printf("%d: doing request\n", id)
+		return rand.Int()
+	}
+	breaker, _ := resilience.CreateCircuitBreaker(
+		0, doRequest, func(_ int) bool { return requestFails },
+	)
+	// act
+	go func() { breakerCh <- breaker(now, 1) }()
+	go func() { breakerCh <- breaker(now, 2) }()
+	<-sync
+	<-sync
+	// this request will be the first and will fail, what opens the breaker
+	requestFails = true
+	requestReleases[1] <- true
+	firstResult := <-breakerCh
+	// this request will be the second, will succeed and should keep the breaker open
+	requestFails = false
+	requestReleases[2] <- true
+	secondResult := <-breakerCh
+	// assert
+	assert.True(t, firstResult.IsOpen(), "first request open the breaker")
+	assert.True(t, secondResult.IsOpen(), "second request should keep the breaker open")
+	assert.False(t, secondResult.IsClosed(), "second request should not close the breaker")
 }
