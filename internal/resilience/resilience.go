@@ -7,52 +7,111 @@ import (
 	"github.com/google/uuid"
 )
 
-type CircuitBreakerStatus string
+type circuitBreakerStatus string
 
 const (
-	open   CircuitBreakerStatus = "open"
-	closed CircuitBreakerStatus = "closed"
+	Open   circuitBreakerStatus = "open"
+	Closed circuitBreakerStatus = "closed"
 )
 
 type DoRequest[U any, T any] = func(U) T
 
-type CircuitBreakerInfo[T any] struct {
-	id            uuid.UUID
-	status        CircuitBreakerStatus
-	OpenUntil     *time.Time
-	RequestResult T
+type CircuitBreakerState[T any] struct {
+	id             uuid.UUID
+	status         circuitBreakerStatus
+	numberOfErrors int
+	openUntil      *time.Time
+	requestResult  T
 }
 
-func (info *CircuitBreakerInfo[T]) IsClosed() bool {
-	return info.status == closed
+func CreateState[T any](
+	status circuitBreakerStatus,
+	numberOfErrors int,
+	OpenUntil *time.Time,
+	RequestResult T,
+) *CircuitBreakerState[T] {
+	return &CircuitBreakerState[T]{
+		id:             uuid.New(),
+		status:         status,
+		numberOfErrors: numberOfErrors,
+		openUntil:      OpenUntil,
+		requestResult:  RequestResult,
+	}
 }
 
-func (info *CircuitBreakerInfo[T]) IsOpen() bool {
-	return info.status == open
+func (state CircuitBreakerState[T]) IsClosed() bool {
+	return state.status == Closed
 }
 
-func (info *CircuitBreakerInfo[T]) IsHalfOpen(nowReference time.Time) bool {
-	if info.OpenUntil == nil {
+func (state CircuitBreakerState[T]) IsOpen() bool {
+	return state.status == Open
+}
+
+func (state CircuitBreakerState[T]) IsHalfOpen(nowReference time.Time) bool {
+	if state.openUntil == nil {
 		return false
 	}
-	return info.status == open && nowReference.Compare(*info.OpenUntil) == 1
+	return state.status == Open && nowReference.Compare(*state.openUntil) >= 0
 }
 
-func (info *CircuitBreakerInfo[T]) CopyWithNewId() *CircuitBreakerInfo[T] {
-	return &CircuitBreakerInfo[T]{
-		id:            uuid.New(),
-		status:        info.status,
-		OpenUntil:     info.OpenUntil,
-		RequestResult: info.RequestResult,
+func (state CircuitBreakerState[T]) OpenUntil() *time.Time {
+	return state.openUntil
+}
+
+func (state CircuitBreakerState[T]) RequestResult() T {
+	return state.requestResult
+}
+
+func (state CircuitBreakerState[T]) NumberOfErrors() int {
+	return state.numberOfErrors
+}
+
+func (state CircuitBreakerState[T]) Repeat() *CircuitBreakerState[T] {
+	return &CircuitBreakerState[T]{
+		id:             uuid.New(),
+		status:         state.status,
+		numberOfErrors: state.numberOfErrors,
+		openUntil:      state.openUntil,
+		requestResult:  state.requestResult,
 	}
 }
 
-func getNextOpenUntil(nowReference time.Time) *time.Time {
-	foo := nowReference.Add(30 * time.Minute)
-	return &foo
+func (state CircuitBreakerState[T]) ConstructNextState(
+	nowReference time.Time,
+	requestResult T,
+	maximumNumberOfErrorsBeforeOpen int,
+	isRequestResultErroredFn func(T) bool,
+) *CircuitBreakerState[T] {
+	var (
+		isRequestResultErrored = isRequestResultErroredFn(requestResult)
+		openUntil              = nowReference.Add(30 * time.Minute)
+	)
+
+	switch {
+	case state.IsClosed():
+		if isRequestResultErrored {
+			if state.numberOfErrors >= maximumNumberOfErrorsBeforeOpen {
+				return CreateState(Open, state.numberOfErrors+1, &openUntil, requestResult)
+			} else {
+				return CreateState(Closed, state.numberOfErrors+1, nil, requestResult)
+			}
+		} else {
+			return CreateState(Closed, 0, nil, requestResult)
+		}
+	case state.IsHalfOpen(nowReference):
+		if isRequestResultErrored {
+			return CreateState(Open, state.numberOfErrors+1, &openUntil, requestResult)
+		} else {
+			return CreateState(Closed, 0, nil, requestResult)
+		}
+	case state.IsOpen():
+		return state.Repeat()
+	default:
+		return state.Repeat()
+	}
 }
 
-type CircuitBreakerHandler[U any, T comparable] = func(time.Time, U) *CircuitBreakerInfo[T]
+type CircuitBreakerHandler[U any, T comparable] = func(time.Time, U) *CircuitBreakerState[T]
 
 func CreateCircuitBreaker[U any, T comparable](
 	maximumNumberOfErrorsBeforeOpen int,
@@ -60,78 +119,29 @@ func CreateCircuitBreaker[U any, T comparable](
 	checkRequestIsErrored func(T) bool,
 ) (CircuitBreakerHandler[U, T], func(time.Time) bool) {
 	var (
-		numberOfErrors = 0
-		state          = &CircuitBreakerInfo[T]{id: uuid.New(), status: closed, OpenUntil: nil}
-		zeroT          T
-		mutex          = sync.RWMutex{}
+		mutex = sync.RWMutex{}
+		zeroT T
+		state = CreateState(Closed, 0, nil, zeroT)
 	)
 
+	// TEST: protect
 	isOpen := func(nowReference time.Time) bool {
 		return state.IsOpen() && !state.IsHalfOpen(nowReference)
 	}
 
-	handler := func(nowReference time.Time, requestInput U) *CircuitBreakerInfo[T] {
-		var (
-			stateSnapshot          *CircuitBreakerInfo[T]
-			nextState              *CircuitBreakerInfo[T]
-			numberOfErrorsSnapshot int
-			nextNumberOfErrors     int
-		)
+	handler := func(nowReference time.Time, requestInput U) *CircuitBreakerState[T] {
+		var requestResult T
 
-		mutex.RLock()
-		stateSnapshot = &CircuitBreakerInfo[T]{
-			id:            state.id,
-			status:        state.status,
-			OpenUntil:     state.OpenUntil,
-			RequestResult: state.RequestResult,
-		}
-		numberOfErrorsSnapshot = numberOfErrors
-		mutex.RUnlock()
-
-		if stateSnapshot.IsClosed() || stateSnapshot.IsHalfOpen(nowReference) {
-			var (
-				requestResponse  = doRequest(requestInput)
-				requestIsErrored = checkRequestIsErrored(requestResponse)
-			)
-			if requestIsErrored {
-				nextNumberOfErrors = numberOfErrorsSnapshot + 1
-			} else {
-				nextNumberOfErrors = 0
-			}
-			if stateSnapshot.IsClosed() && nextNumberOfErrors > maximumNumberOfErrorsBeforeOpen {
-				nextState = &CircuitBreakerInfo[T]{
-					id:            uuid.New(),
-					status:        open,
-					OpenUntil:     getNextOpenUntil(nowReference),
-					RequestResult: zeroT,
-				}
-			} else if stateSnapshot.IsHalfOpen(nowReference) && requestIsErrored {
-				nextNumberOfErrors = 0
-				nextState = &CircuitBreakerInfo[T]{
-					id:            uuid.New(),
-					status:        open,
-					OpenUntil:     getNextOpenUntil(nowReference),
-					RequestResult: zeroT,
-				}
-			} else {
-				nextState = &CircuitBreakerInfo[T]{
-					id:            uuid.New(),
-					status:        closed,
-					OpenUntil:     nil,
-					RequestResult: requestResponse,
-				}
-			}
-		} else {
-			nextState = stateSnapshot.CopyWithNewId()
+		if state.IsClosed() || state.IsHalfOpen(nowReference) {
+			requestResult = doRequest(requestInput)
 		}
 
 		mutex.Lock()
 		defer mutex.Unlock()
 
-		if stateSnapshot.id == state.id {
-			state = nextState
-			numberOfErrors = nextNumberOfErrors
-		}
+		state = state.ConstructNextState(
+			nowReference, requestResult, maximumNumberOfErrorsBeforeOpen, checkRequestIsErrored,
+		)
 
 		return state
 	}

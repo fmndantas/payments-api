@@ -163,7 +163,7 @@ func ProcessOutboxEvents(
 			break
 		} else {
 			var (
-				requestResult = pspOutput.RequestResult
+				requestResult = pspOutput.RequestResult()
 				pspHttp       = requestResult.HttpResponse
 				pspError      = requestResult.Error
 			)
@@ -185,8 +185,8 @@ func ProcessOutboxEvents(
 				context,
 				tree,
 				outboxEvent,
-				pspOutput.RequestResult.HttpResponse,
-				pspOutput.RequestResult.Error,
+				pspOutput.RequestResult().HttpResponse,
+				pspOutput.RequestResult().Error,
 				lockToken,
 				nowReference,
 				decideNextErrorStatus,
