@@ -257,9 +257,7 @@ func TestConstructNextState(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.idCase, func(t *testing.T) {
 			result := tt.state.ConstructNextState(tsCall, Foo{}, 5, func(_ Foo) bool { return tt.requestIsErrored })
-			assert.Equal(t, tt.expected.IsClosed(), result.IsClosed(), "is closed")
-			assert.Equal(t, tt.expected.IsHalfOpen(tsCall), result.IsHalfOpen(tsCall), "is half-open")
-			assert.Equal(t, tt.expected.IsOpen(), result.IsOpen(), "is open")
+			assert.Equal(t, tt.expected.Status(), result.Status(), "status")
 			assert.Equal(t, tt.expected.OpenUntil(), result.OpenUntil(), "open until")
 			assert.Equal(t, tt.expected.NumberOfErrors(), result.NumberOfErrors(), "number of errors")
 		})

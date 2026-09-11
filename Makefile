@@ -25,4 +25,4 @@ test:
 	go test ./...
 
 test-concurrency:
-	go test -race -count=100 -run=ConcurrencyProtection ./internal/resilience/resilience_test.go
+	go test -race -count=100 -timeout=1s -run=ConcurrencyProtection ./internal/resilience/resilience_test.go

@@ -54,6 +54,10 @@ func (state CircuitBreakerState[T]) IsHalfOpen(nowReference time.Time) bool {
 	return state.status == Open && nowReference.Compare(*state.openUntil) >= 0
 }
 
+func (state CircuitBreakerState[T]) Status() circuitBreakerStatus {
+	return state.status
+}
+
 func (state CircuitBreakerState[T]) OpenUntil() *time.Time {
 	return state.openUntil
 }
@@ -124,15 +128,24 @@ func CreateCircuitBreaker[U any, T comparable](
 		state = CreateState(Closed, 0, nil, zeroT)
 	)
 
-	// TEST: protect
 	isOpen := func(nowReference time.Time) bool {
+		mutex.RLock()
+		defer mutex.RUnlock()
+
 		return state.IsOpen() && !state.IsHalfOpen(nowReference)
 	}
 
 	handler := func(nowReference time.Time, requestInput U) *CircuitBreakerState[T] {
-		var requestResult T
+		var (
+			requestResult   T
+			shouldDoRequest = false
+		)
 
-		if state.IsClosed() || state.IsHalfOpen(nowReference) {
+		mutex.RLock()
+		shouldDoRequest = state.IsClosed() || state.IsHalfOpen(nowReference)
+		mutex.RUnlock()
+
+		if shouldDoRequest {
 			requestResult = doRequest(requestInput)
 		}
 
