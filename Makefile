@@ -1,6 +1,8 @@
 LOG_LEVEL ?= info
 LOG_DIR ?= logs
 
+.PHONY: test
+
 db-up:
 	docker-compose -f ./docker-compose.yml up -d
 
@@ -19,5 +21,8 @@ api:
 worker:
 	LOG_FILE=$(LOG_DIR)/worker.log LOG_LEVEL=$(LOG_LEVEL) go run ./cmd/worker/main.go
 
-tests:
+test:
 	go test ./...
+
+test-concurrency:
+	go test -race -count=100 -timeout=1s -run=ConcurrencyProtection ./internal/resilience/resilience_test.go

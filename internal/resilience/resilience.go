@@ -1,92 +1,162 @@
 package resilience
 
 import (
+	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
-type CircuitBreakerStatus string
+type circuitBreakerStatus string
 
 const (
-	open   CircuitBreakerStatus = "open"
-	closed CircuitBreakerStatus = "closed"
+	Open   circuitBreakerStatus = "open"
+	Closed circuitBreakerStatus = "closed"
 )
 
 type DoRequest[U any, T any] = func(U) T
 
-type CircuitBreakerInfo[T any] struct {
-	status        CircuitBreakerStatus
-	OpenUntil     *time.Time
-	RequestResult T
+type CircuitBreakerState[T any] struct {
+	id             uuid.UUID
+	status         circuitBreakerStatus
+	numberOfErrors int
+	openUntil      *time.Time
+	requestResult  T
 }
 
-func (info *CircuitBreakerInfo[T]) IsClosed() bool {
-	return info.status == closed
+func CreateState[T any](
+	status circuitBreakerStatus,
+	numberOfErrors int,
+	OpenUntil *time.Time,
+	RequestResult T,
+) *CircuitBreakerState[T] {
+	return &CircuitBreakerState[T]{
+		id:             uuid.New(),
+		status:         status,
+		numberOfErrors: numberOfErrors,
+		openUntil:      OpenUntil,
+		requestResult:  RequestResult,
+	}
 }
 
-func (info *CircuitBreakerInfo[T]) IsOpen() bool {
-	return info.status == open
+func (state CircuitBreakerState[T]) IsClosed() bool {
+	return state.status == Closed
 }
 
-func (info *CircuitBreakerInfo[T]) IsHalfOpen(nowReference time.Time) bool {
-	if info.OpenUntil == nil {
+func (state CircuitBreakerState[T]) IsOpen() bool {
+	return state.status == Open
+}
+
+func (state CircuitBreakerState[T]) IsHalfOpen(nowReference time.Time) bool {
+	if state.openUntil == nil {
 		return false
 	}
-	return info.status == open && nowReference.Compare(*info.OpenUntil) == 1
+	return state.status == Open && nowReference.Compare(*state.openUntil) >= 0
 }
 
-func getNextOpenUntil(nowReference time.Time) *time.Time {
-	foo := nowReference.Add(30 * time.Minute)
-	return &foo
+func (state CircuitBreakerState[T]) Status() circuitBreakerStatus {
+	return state.status
 }
 
-type CircuitBreakerHandler[U any, T any] = func(time.Time, U) *CircuitBreakerInfo[T]
+func (state CircuitBreakerState[T]) OpenUntil() *time.Time {
+	return state.openUntil
+}
 
-func CreateCircuitBreaker[U any, T any](
+func (state CircuitBreakerState[T]) RequestResult() T {
+	return state.requestResult
+}
+
+func (state CircuitBreakerState[T]) NumberOfErrors() int {
+	return state.numberOfErrors
+}
+
+func (state CircuitBreakerState[T]) Repeat() *CircuitBreakerState[T] {
+	return &CircuitBreakerState[T]{
+		id:             uuid.New(),
+		status:         state.status,
+		numberOfErrors: state.numberOfErrors,
+		openUntil:      state.openUntil,
+		requestResult:  state.requestResult,
+	}
+}
+
+func (state CircuitBreakerState[T]) ConstructNextState(
+	nowReference time.Time,
+	requestResult T,
+	maximumNumberOfErrorsBeforeOpen int,
+	isRequestResultErroredFn func(T) bool,
+) *CircuitBreakerState[T] {
+	var (
+		isRequestResultErrored = isRequestResultErroredFn(requestResult)
+		openUntil              = nowReference.Add(30 * time.Minute)
+	)
+
+	switch {
+	case state.IsClosed():
+		if isRequestResultErrored {
+			if state.numberOfErrors >= maximumNumberOfErrorsBeforeOpen {
+				return CreateState(Open, state.numberOfErrors+1, &openUntil, requestResult)
+			} else {
+				return CreateState(Closed, state.numberOfErrors+1, nil, requestResult)
+			}
+		} else {
+			return CreateState(Closed, 0, nil, requestResult)
+		}
+	case state.IsHalfOpen(nowReference):
+		if isRequestResultErrored {
+			return CreateState(Open, state.numberOfErrors+1, &openUntil, requestResult)
+		} else {
+			return CreateState(Closed, 0, nil, requestResult)
+		}
+	case state.IsOpen():
+		return state.Repeat()
+	default:
+		return state.Repeat()
+	}
+}
+
+type CircuitBreakerHandler[U any, T comparable] = func(time.Time, U) *CircuitBreakerState[T]
+
+func CreateCircuitBreaker[U any, T comparable](
 	maximumNumberOfErrorsBeforeOpen int,
 	doRequest DoRequest[U, T],
 	checkRequestIsErrored func(T) bool,
 ) (CircuitBreakerHandler[U, T], func(time.Time) bool) {
 	var (
-		currentNumberOfErrors = 0
-		currentInfo           = &CircuitBreakerInfo[T]{status: closed, OpenUntil: nil}
-		zeroT                 T
+		mutex = sync.RWMutex{}
+		zeroT T
+		state = CreateState(Closed, 0, nil, zeroT)
 	)
 
 	isOpen := func(nowReference time.Time) bool {
-		return currentInfo.IsOpen() && !currentInfo.IsHalfOpen(nowReference)
+		mutex.RLock()
+		defer mutex.RUnlock()
+
+		return state.IsOpen() && !state.IsHalfOpen(nowReference)
 	}
 
-	handler := func(nowReference time.Time, requestInput U) *CircuitBreakerInfo[T] {
-		if currentInfo.IsClosed() || currentInfo.IsHalfOpen(nowReference) {
-			requestResponse := doRequest(requestInput)
-			requestIsErrored := checkRequestIsErrored(requestResponse)
-			if requestIsErrored {
-				currentNumberOfErrors += 1
-			} else {
-				currentNumberOfErrors = 0
-			}
-			if currentInfo.IsClosed() && currentNumberOfErrors > maximumNumberOfErrorsBeforeOpen {
-				currentInfo = &CircuitBreakerInfo[T]{
-					status:        open,
-					OpenUntil:     getNextOpenUntil(nowReference),
-					RequestResult: zeroT,
-				}
-			} else if currentInfo.IsHalfOpen(nowReference) && requestIsErrored {
-				currentNumberOfErrors = 0
-				currentInfo = &CircuitBreakerInfo[T]{
-					status:        open,
-					OpenUntil:     getNextOpenUntil(nowReference),
-					RequestResult: zeroT,
-				}
-			} else {
-				currentInfo = &CircuitBreakerInfo[T]{
-					status:        closed,
-					OpenUntil:     nil,
-					RequestResult: requestResponse,
-				}
-			}
+	handler := func(nowReference time.Time, requestInput U) *CircuitBreakerState[T] {
+		var (
+			requestResult   T
+			shouldDoRequest = false
+		)
+
+		mutex.RLock()
+		shouldDoRequest = state.IsClosed() || state.IsHalfOpen(nowReference)
+		mutex.RUnlock()
+
+		if shouldDoRequest {
+			requestResult = doRequest(requestInput)
 		}
-		return currentInfo
+
+		mutex.Lock()
+		defer mutex.Unlock()
+
+		state = state.ConstructNextState(
+			nowReference, requestResult, maximumNumberOfErrorsBeforeOpen, checkRequestIsErrored,
+		)
+
+		return state
 	}
 
 	return handler, isOpen

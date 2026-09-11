@@ -51,8 +51,8 @@ func main() {
 		},
 	)
 
-	go func() {
-		for now := range time.Tick(5 * time.Second) {
+	for now := range time.Tick(5 * time.Second) {
+		go func() {
 			ch <- outbox.ProcessOutboxEvents(
 				context,
 				tree,
@@ -63,8 +63,8 @@ func main() {
 				pspWithCircuitBreaker,
 				outbox.EventIsErroredWithFiveAttempts,
 			)
-		}
-	}()
+		}()
+	}
 
 	for err := range ch {
 		if err != nil {
