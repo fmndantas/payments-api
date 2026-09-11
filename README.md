@@ -207,8 +207,10 @@ retry transitions, successful processing, and circuit-breaker behavior.
 
 ## Next steps
 
-- Add a real PSP adapter with provider-side idempotency.
-- Receive and deduplicate signed PSP webhooks.
-- Move runtime configuration to environment variables.
-- Add graceful shutdown and request timeouts.
-- Add operational metrics for outbox lag, retries, failures, and circuit-breaker state.
+- [ ] Add a real PSP adapter with provider-side idempotency.
+- [ ] Receive and deduplicate signed PSP webhooks.
+- [ ] Move runtime configuration to environment variables.
+- [ ] Add graceful shutdown and request timeouts.
+- [ ] Add operational metrics for outbox lag, retries, failures, and circuit-breaker state.
+- [ ] Add more concurrency test cases for the circuit breaker
+- [ ] Adjust the worker so that it sends a batch of events to PSP in parallel
