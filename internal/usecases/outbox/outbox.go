@@ -78,7 +78,7 @@ type DecideNextErrorStatusFn = func(currentAttemptCount int) OutboxStatus
 type SendToPsp = resilience.CircuitBreakerHandler[psp.PspInput, psp.PspOutput]
 
 func ProcessOutboxEvents(
-	context context.Context,
+	ctx context.Context,
 	tree *dependencies.Tree,
 	nowReference time.Time,
 	batchSize int,
@@ -94,16 +94,16 @@ func ProcessOutboxEvents(
 
 	slog.Info("processing a batch of outbox events", "token", lockToken, "size", batchSize)
 
-	tx, err := tree.DbPool.Begin(context)
+	tx, err := tree.DbPool.Begin(ctx)
 
 	if err != nil {
 		return fmt.Errorf("open transaction: %w", err)
 	}
 
-	defer tx.Rollback(context)
+	defer tx.Rollback(ctx)
 
 	tag, err := tx.Exec(
-		context,
+		ctx,
 		reserveOutboxEventsCommand,
 		nowReference,
 		batchSize,
@@ -116,7 +116,7 @@ func ProcessOutboxEvents(
 		return fmt.Errorf("reserve outbox command: %w", err)
 	}
 
-	if err = tx.Commit(context); err != nil {
+	if err = tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit reserve outbox command: %w", err)
 	}
 
@@ -127,7 +127,7 @@ func ProcessOutboxEvents(
 		return nil
 	}
 
-	outboxEventsRows, err := tree.DbPool.Query(context, getOutboxEventsByLockToken, lockToken)
+	outboxEventsRows, err := tree.DbPool.Query(ctx, getOutboxEventsByLockToken, lockToken)
 
 	if err != nil {
 		return fmt.Errorf("get outbox events by lock token: %w", err)
@@ -156,7 +156,7 @@ func ProcessOutboxEvents(
 	// TODO: paralellize
 	for _, outboxEvent := range outboxEvents {
 		slog.Info("processing outbox event", "id", outboxEvent.Id)
-		pspOutput := sendToPsp(nowReference, psp.PspInput{Context: context, Outbox: outboxEvent})
+		pspOutput := sendToPsp(nowReference, psp.PspInput{Context: ctx, Outbox: outboxEvent})
 		if pspOutput.IsOpen() {
 			slog.Error("circuit breaker tripped")
 			shouldUnreserveBatch = true
@@ -182,7 +182,7 @@ func ProcessOutboxEvents(
 			}
 
 			persistenceError := persistEventUpdate(
-				context,
+				ctx,
 				tree,
 				outboxEvent,
 				pspOutput.RequestResult().HttpResponse,
@@ -207,17 +207,17 @@ func ProcessOutboxEvents(
 
 	slog.Info("batch will be unreserved")
 
-	tx, txErr := tree.DbPool.Begin(context)
+	tx, txErr := tree.DbPool.Begin(ctx)
 	handleErr("open transaction", txErr)
 
 	if txErr != nil {
 		return errs
 	}
 
-	defer tx.Rollback(context)
+	defer tx.Rollback(ctx)
 
 	_, unreserveErr := tx.Exec(
-		context,
+		ctx,
 		"update outbox set lock_token = null, locked_until = null where lock_token = $1",
 		lockToken,
 	)
@@ -228,7 +228,7 @@ func ProcessOutboxEvents(
 		return errs
 	}
 
-	if commitErr := tx.Commit(context); commitErr != nil {
+	if commitErr := tx.Commit(ctx); commitErr != nil {
 		handleErr("commit unreserve", commitErr)
 	}
 
@@ -243,7 +243,7 @@ func EventIsErroredWithFiveAttempts(currentAttemptCount int) OutboxStatus {
 }
 
 func persistEventUpdate(
-	context context.Context,
+	ctx context.Context,
 	tree *dependencies.Tree,
 	event db.Outbox,
 	pspResponse psp.PspHttpResponse,
@@ -252,23 +252,23 @@ func persistEventUpdate(
 	nowReference time.Time,
 	decideNextErrorStatus DecideNextErrorStatusFn,
 ) error {
-	if context.Err() != nil {
-		return MarkEventAsErrored(context, tree, event, context.Err(), lockToken, nowReference, decideNextErrorStatus)
+	if ctx.Err() != nil {
+		return MarkEventAsErrored(ctx, tree, event, ctx.Err(), lockToken, nowReference, decideNextErrorStatus)
 	}
 
 	if pspError != nil {
-		return MarkEventAsErrored(context, tree, event, pspError, lockToken, nowReference, decideNextErrorStatus)
+		return MarkEventAsErrored(ctx, tree, event, pspError, lockToken, nowReference, decideNextErrorStatus)
 	}
 
 	if pspResponse.StatusCode >= 400 {
 		var pspErrorPayload PspErrorPayload
 		unmarshalError := json.Unmarshal([]byte(pspResponse.JsonBody), &pspErrorPayload)
 		if unmarshalError != nil {
-			return MarkEventAsErrored(context, tree, event, unmarshalError, lockToken, nowReference, decideNextErrorStatus)
+			return MarkEventAsErrored(ctx, tree, event, unmarshalError, lockToken, nowReference, decideNextErrorStatus)
 		}
 
 		return MarkEventAsErrored(
-			context,
+			ctx,
 			tree,
 			event,
 			fmt.Errorf(
@@ -282,7 +282,7 @@ func persistEventUpdate(
 		)
 	}
 
-	return MarkEventAsSuccessful(context, tree, pspResponse, event, lockToken, nowReference)
+	return MarkEventAsSuccessful(ctx, tree, pspResponse, event, lockToken, nowReference)
 }
 
 func GetNextTryAt(attemptCount int) time.Duration {
@@ -305,7 +305,7 @@ func GetNextTryAt(attemptCount int) time.Duration {
 }
 
 func MarkEventAsErrored(
-	context context.Context,
+	ctx context.Context,
 	tree *dependencies.Tree,
 	event db.Outbox,
 	eventError error,
@@ -317,13 +317,13 @@ func MarkEventAsErrored(
 		return fmt.Errorf("event %d was marked for error, but the parameter `eventError` is nil", event.Id)
 	}
 
-	tx, txErr := tree.DbPool.Begin(context)
+	tx, txErr := tree.DbPool.Begin(ctx)
 
 	if txErr != nil {
 		return txErr
 	}
 
-	defer tx.Rollback(context)
+	defer tx.Rollback(ctx)
 
 	var (
 		nextErrorStatus = decideNextErrorStatus(event.AttemptCount)
@@ -338,7 +338,7 @@ func MarkEventAsErrored(
 	)
 
 	tag, txErr := tx.Exec(
-		context,
+		ctx,
 		markOutboxEventAsRetryCommand,
 		nextTryAt,
 		nextErrorStatus,
@@ -356,7 +356,7 @@ func MarkEventAsErrored(
 		return fmt.Errorf("number of affected rows (outbox table) != 1 (%d)", tag.RowsAffected())
 	}
 
-	if txErr = tx.Commit(context); txErr != nil {
+	if txErr = tx.Commit(ctx); txErr != nil {
 		return txErr
 	}
 
@@ -372,20 +372,20 @@ type PspErrorPayload struct {
 }
 
 func MarkEventAsSuccessful(
-	context context.Context,
+	ctx context.Context,
 	tree *dependencies.Tree,
 	pspHttpResponse psp.PspHttpResponse,
 	event db.Outbox,
 	lockToken uuid.UUID,
 	nowReference time.Time,
 ) error {
-	tx, txErr := tree.DbPool.Begin(context)
+	tx, txErr := tree.DbPool.Begin(ctx)
 
 	if txErr != nil {
 		return txErr
 	}
 
-	defer tx.Rollback(context)
+	defer tx.Rollback(ctx)
 
 	slog.Info(
 		"marking outbox as success",
@@ -394,7 +394,7 @@ func MarkEventAsSuccessful(
 	)
 
 	tag, err := tx.Exec(
-		context,
+		ctx,
 		markOutboxEventAsSuccessCommand,
 		eventstatus.Success,
 		pspHttpResponse.JsonBody,
@@ -417,7 +417,7 @@ func MarkEventAsSuccessful(
 	}
 
 	_, err = tx.Exec(
-		context,
+		ctx,
 		markPaymentAsSuccessfulCommand,
 		pspSuccessPayload.IdPspPayment,
 		pspHttpResponse.JsonBody,
@@ -428,5 +428,5 @@ func MarkEventAsSuccessful(
 		return err
 	}
 
-	return tx.Commit(context)
+	return tx.Commit(ctx)
 }

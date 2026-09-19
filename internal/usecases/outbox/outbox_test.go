@@ -100,21 +100,21 @@ func eventIsErroredWithOneAttempt(currentAttemptCount int) outbox.OutboxStatus {
 	return eventstatus.Errored
 }
 
-func resetDbState(context context.Context, tree *dependencies.Tree) error {
-	tx, err := tree.DbPool.Begin(context)
+func resetDbState(ctx context.Context, tree *dependencies.Tree) error {
+	tx, err := tree.DbPool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 
-	defer tx.Rollback(context)
+	defer tx.Rollback(ctx)
 
-	_, err = tx.Exec(context, "truncate table payment cascade;")
+	_, err = tx.Exec(ctx, "truncate table payment cascade;")
 
 	if err != nil {
 		return err
 	}
 
-	if err = tx.Commit(context); err != nil {
+	if err = tx.Commit(ctx); err != nil {
 		return err
 	}
 

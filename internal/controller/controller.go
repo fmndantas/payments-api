@@ -26,20 +26,20 @@ func GetIdRequestForPersistence(originalIdRequest string) (string, error) {
 	return strings.Replace(originalIdRequest, "request:checkout:", "", 1), nil
 }
 
-func Health(tree *dependencies.Tree, c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"version": "development"})
+func Health(tree *dependencies.Tree, ctx *gin.Context) {
+	ctx.JSON(http.StatusOK, gin.H{"version": "development"})
 }
 
-func Checkout(t *dependencies.Tree, context *gin.Context) {
+func Checkout(t *dependencies.Tree, ctx *gin.Context) {
 	var request *CheckoutRequest
-	if err := context.ShouldBindJSON(&request); err != nil {
-		context.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := ctx.ShouldBindJSON(&request); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	idRequestWithoutPrefix, err := GetIdRequestForPersistence(request.IdRequest)
 	if err != nil {
-		context.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -54,12 +54,12 @@ func Checkout(t *dependencies.Tree, context *gin.Context) {
 	validation = errors.Join(validation, err)
 
 	if validation != nil {
-		context.JSON(http.StatusBadRequest, gin.H{"error": validation.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": validation.Error()})
 		return
 	}
 
 	idExternalPayment, err := checkout.HandleCheckout(
-		t, context, idRequest, idSourceAccount, idDestinyAccount, time.Now(),
+		t, ctx, idRequest, idSourceAccount, idDestinyAccount, time.Now(),
 	)
 
 	if err != nil {
@@ -72,9 +72,9 @@ func Checkout(t *dependencies.Tree, context *gin.Context) {
 		default:
 			statusCode = http.StatusInternalServerError
 		}
-		context.JSON(statusCode, gin.H{"error": err.Error()})
+		ctx.JSON(statusCode, gin.H{"error": err.Error()})
 		return
 	}
 
-	context.JSON(http.StatusOK, gin.H{"id_payment": idExternalPayment})
+	ctx.JSON(http.StatusOK, gin.H{"id_payment": idExternalPayment})
 }

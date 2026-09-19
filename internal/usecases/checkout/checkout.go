@@ -18,21 +18,21 @@ var (
 
 func HandleCheckout(
 	t *dependencies.Tree,
-	context context.Context,
+	ctx context.Context,
 	idRequest,
 	idSourceAccount,
 	idDestinyAccount uuid.UUID,
 	nowReference time.Time,
 ) (uuid.UUID, error) {
 	var foo string
-	err := t.DbPool.QueryRow(context, "select id_request from payment where id_request = $1", idRequest).Scan(&foo)
+	err := t.DbPool.QueryRow(ctx, "select id_request from payment where id_request = $1", idRequest).Scan(&foo)
 
 	if err == nil {
 		return uuid.Nil, ErrorCheckoutIdRequestAlreadyWasProcessed
 	}
 
 	accountsRows, err := t.DbPool.Query(
-		context,
+		ctx,
 		"select id_internal, id_external from account where id_external = $1 or id_external = $2",
 		idSourceAccount,
 		idDestinyAccount,
@@ -65,7 +65,7 @@ func HandleCheckout(
 		return uuid.Nil, ErrorCheckoutAtLeastOneAccountIsMissing
 	}
 
-	tx, err := t.DbPool.Begin(context)
+	tx, err := t.DbPool.Begin(ctx)
 
 	if err != nil {
 		return uuid.Nil, err
@@ -73,7 +73,7 @@ func HandleCheckout(
 
 	idExternalPayment, idInternalPayment := uuid.New(), 0
 	err = tx.QueryRow(
-		context,
+		ctx,
 		`insert into payment(id_external, id_request, id_source_account, id_destiny_account, created_at)
 		values ($1, $2, $3, $4, $5)
 		returning id_internal`,
@@ -85,18 +85,18 @@ func HandleCheckout(
 	}
 
 	_, err = tx.Exec(
-		context,
+		ctx,
 		`insert into outbox (id_payment, status, next_try_at, created_at)
 		values ($1, $2, $3, $4)`,
 		idInternalPayment, eventstatus.Unprocessed, nowReference, nowReference,
 	)
-	defer tx.Rollback(context)
+	defer tx.Rollback(ctx)
 
 	if err != nil {
 		return uuid.Nil, err
 	}
 
-	if err := tx.Commit(context); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return uuid.Nil, err
 	}
 
