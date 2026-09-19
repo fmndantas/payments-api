@@ -87,6 +87,10 @@ func ProcessOutboxEvents(
 	sendToPsp SendToPsp,
 	decideNextErrorStatus DecideNextErrorStatusFn,
 ) error {
+	if ctx.Err() != nil {
+		slog.Info(ctx.Err().Error())
+	}
+
 	if isPspCircuitOpen(nowReference) {
 		slog.Info("circuit breaker is open; skipping outbox batch")
 		return nil

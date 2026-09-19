@@ -16,6 +16,16 @@ var (
 	ErrorCheckoutIdRequestAlreadyWasProcessed = errors.New("this request was already processed")
 )
 
+/*
+	TODO: revisar idempotência
+
+	id request existe
+		source, destiny igual ao salvo -> retornar id_external_payment
+		else -> id_request já foi processado
+	id request não existe
+		processar e salvar
+*/
+
 func HandleCheckout(
 	t *dependencies.Tree,
 	ctx context.Context,

@@ -63,7 +63,7 @@ func Initialize(dbConfiguration db.DbConfiguration) (*Tree, error) {
 func (tree *Tree) InjectToController(
 	originalFn func(*Tree, *gin.Context),
 ) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		originalFn(tree, c)
+	return func(ctx *gin.Context) {
+		originalFn(tree, ctx)
 	}
 }

@@ -39,8 +39,8 @@ func main() {
 	}
 
 	var (
-		context = context.Background()
-		ch      = make(chan error)
+		ctx = context.Background()
+		ch  = make(chan error)
 	)
 
 	pspWithCircuitBreaker, isPspCircuitOpen := resilience.CreateCircuitBreaker(
@@ -52,9 +52,14 @@ func main() {
 	)
 
 	for now := range time.Tick(5 * time.Second) {
+		ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Second)
+		defer func() {
+			slog.Info("Calling cancel from 5 seconds loop")
+			cancel()
+		}()
 		go func() {
 			ch <- outbox.ProcessOutboxEvents(
-				context,
+				ctxWithTimeout,
 				tree,
 				now,
 				10,
