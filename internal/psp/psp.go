@@ -5,16 +5,16 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/google/uuid"
 	"math/rand/v2"
+
+	"github.com/google/uuid"
 
 	"github.com/fmndantas/payments/internal/db"
 	"github.com/fmndantas/payments/internal/resilience"
 )
 
 type PspInput struct {
-	Context context.Context
-	Outbox  db.Outbox
+	Outbox db.Outbox
 }
 
 type PspHttpResponse struct {
@@ -23,16 +23,16 @@ type PspHttpResponse struct {
 }
 
 type PspOutput struct {
-	HttpResponse  PspHttpResponse
-	Error error
+	HttpResponse PspHttpResponse
+	Error        error
 }
 
 type SendEventToPspFn = resilience.DoRequest[PspInput, PspOutput]
 
 // This function simulates the PSP response
-func SendOutboxEventToPspFake(pspInput PspInput) PspOutput {
-	if pspInput.Context.Err() != nil {
-		return PspOutput{Error: pspInput.Context.Err()}
+func SendOutboxEventToPspFake(ctx context.Context, pspInput PspInput) PspOutput {
+	if ctx.Err() != nil {
+		return PspOutput{Error: ctx.Err()}
 	}
 
 	randomValue := rand.IntN(100)

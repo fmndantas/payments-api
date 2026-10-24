@@ -1,6 +1,7 @@
 package resilience_test
 
 import (
+	"context"
 	"fmt"
 	"math/rand/v2"
 	"sync"
@@ -18,9 +19,10 @@ func TestCircuitBreakerFlux(t *testing.T) {
 		anyInput     = rand.IntN(1000)
 		requestFails = true
 		requestCalls = 0
+		ctx          = context.Background()
 	)
 
-	doRequest := func(_ int) int {
+	doRequest := func(_ context.Context, _ int) int {
 		requestCalls++
 		return 1
 	}
@@ -28,11 +30,11 @@ func TestCircuitBreakerFlux(t *testing.T) {
 	breaker, _ := sut.CreateCircuitBreaker(
 		1,
 		doRequest,
-		func(_ int) bool { return requestFails },
+		func(_ context.Context, _ int) bool { return requestFails },
 	)
 
 	// First failed request stays below the threshold.
-	firstFailure := breaker(now, anyInput)
+	firstFailure := breaker(ctx, now, anyInput)
 	assert.Equal(t, 1, requestCalls)
 	assert.True(t, firstFailure.IsClosed(), "should remain closed")
 	assert.Nil(t, firstFailure.OpenUntil(), "closed: no OpenUntil")
@@ -40,21 +42,21 @@ func TestCircuitBreakerFlux(t *testing.T) {
 	assert.Equal(t, 1, firstFailure.RequestResult(), "response == 1")
 
 	// Second failed request reaches the threshold and opens the circuit.
-	opened := breaker(now, anyInput)
+	opened := breaker(ctx, now, anyInput)
 	assert.Equal(t, 2, requestCalls)
 	assert.True(t, opened.IsOpen(), "should open at threshold")
 	require.NotNil(t, opened.OpenUntil(), "open: has OpenUntil")
 
 	// Requests before OpenUntil are short-circuited.
 	stillOpenAt := opened.OpenUntil().Add(-time.Minute)
-	stillOpen := breaker(stillOpenAt, anyInput)
+	stillOpen := breaker(ctx, stillOpenAt, anyInput)
 	assert.Equal(t, 2, requestCalls, "open: request is not called")
 	assert.True(t, stillOpen.IsOpen(), "should stay open")
 	assert.Equal(t, opened.OpenUntil(), stillOpen.OpenUntil(), "open window is unchanged")
 
 	// A failed half-open probe reopens the circuit for another window.
 	reopenAt := opened.OpenUntil().Add(time.Minute)
-	reopened := breaker(reopenAt, anyInput)
+	reopened := breaker(ctx, reopenAt, anyInput)
 	assert.Equal(t, 3, requestCalls, "half-open: request is called")
 	assert.True(t, reopened.IsOpen(), "failed probe reopens circuit")
 	require.NotNil(t, reopened.OpenUntil(), "reopened: has OpenUntil")
@@ -62,7 +64,7 @@ func TestCircuitBreakerFlux(t *testing.T) {
 
 	// A successful half-open probe closes the circuit.
 	requestFails = false
-	recovered := breaker(reopened.OpenUntil().Add(time.Minute), anyInput)
+	recovered := breaker(ctx, reopened.OpenUntil().Add(time.Minute), anyInput)
 	assert.Equal(t, 4, requestCalls, "half-open: request is called")
 	assert.True(t, recovered.IsClosed(), "successful probe closes circuit")
 	assert.Nil(t, recovered.OpenUntil(), "closed: no OpenUntil")
@@ -72,12 +74,12 @@ func TestCircuitBreakerFlux(t *testing.T) {
 	// After recovery, a new failure sequence starts at zero.
 	requestFails = true
 	// First failure remains below threshold.
-	firstFailureAgain := breaker(now, anyInput)
+	firstFailureAgain := breaker(ctx, now, anyInput)
 	assert.Equal(t, 5, requestCalls)
 	assert.True(t, firstFailureAgain.IsClosed())
 
 	// Second failure reaches threshold and opens circuit.
-	openAgain := breaker(now, anyInput)
+	openAgain := breaker(ctx, now, anyInput)
 	assert.Equal(t, 6, requestCalls)
 	assert.True(t, openAgain.IsOpen())
 }
@@ -90,22 +92,23 @@ Then, a failling request should keep the breaker closed
 because the number of errors returned to zero in the last request.
 */
 func TestIfSuccessResetsErrorCounting(t *testing.T) {
-	doRequest := func(_ int) int { return 1 }
+	doRequest := func(_ context.Context, _ int) int { return 1 }
 	requestFails := true
 	anyInput := rand.IntN(1000)
 	breaker, _ := sut.CreateCircuitBreaker(
 		10,
 		doRequest,
-		func(_ int) bool { return requestFails },
+		func(_ context.Context, _ int) bool { return requestFails },
 	)
+	ctx := context.Background()
 	for range 10 {
-		breaker(time.Now(), anyInput)
+		breaker(ctx, time.Now(), anyInput)
 	}
 	requestFails = false
-	ok := breaker(time.Now(), anyInput)
+	ok := breaker(ctx, time.Now(), anyInput)
 	assert.True(t, ok.IsClosed(), "ok is closed")
 	requestFails = true
-	fail := breaker(time.Now(), anyInput)
+	fail := breaker(ctx, time.Now(), anyInput)
 	assert.True(t, fail.IsClosed(), "fail is closed")
 }
 
@@ -118,6 +121,7 @@ assert breaker remains open, because second request was authorized from stale st
 func TestCheckConcurrencyProtectionA(t *testing.T) {
 	// arrange
 	var (
+		ctx             = context.Background()
 		now             = time.Now()
 		syncCh          = make(chan struct{}, 2)
 		requestReleases = make(map[int]chan struct{})
@@ -125,7 +129,7 @@ func TestCheckConcurrencyProtectionA(t *testing.T) {
 		breakerCh       = make(chan *sut.CircuitBreakerState[int], 2)
 	)
 	requestReleases[1], requestReleases[2] = make(chan struct{}), make(chan struct{})
-	doRequest := func(id int) int {
+	doRequest := func(_ context.Context, id int) int {
 		syncCh <- struct{}{}
 		fmt.Printf("%d: waiting release\n", id)
 		<-requestReleases[id]
@@ -133,11 +137,11 @@ func TestCheckConcurrencyProtectionA(t *testing.T) {
 		return rand.Int()
 	}
 	breaker, _ := sut.CreateCircuitBreaker(
-		0, doRequest, func(_ int) bool { return requestFails },
+		0, doRequest, func(_ context.Context, _ int) bool { return requestFails },
 	)
 	// act
-	go func() { breakerCh <- breaker(now, 1) }()
-	go func() { breakerCh <- breaker(now, 2) }()
+	go func() { breakerCh <- breaker(ctx, now, 1) }()
+	go func() { breakerCh <- breaker(ctx, now, 2) }()
 	<-syncCh
 	<-syncCh
 	// this request will be the first and will fail, what opens the breaker
@@ -160,24 +164,25 @@ and assert that a N-1 circuit breaker opens at the N request
 */
 func TestCheckConcurrencyProtectionB(t *testing.T) {
 	var (
+		ctx       = context.Background()
 		now       = time.Now()
 		N         = 10 // number of requests
 		syncCh    = make(chan struct{})
 		breakerCh = make(chan *sut.CircuitBreakerState[int], N)
 		wg        = sync.WaitGroup{}
 	)
-	doRequest := func(id int) int {
+	doRequest := func(_ context.Context, id int) int {
 		<-syncCh
 		fmt.Printf("%d: doing request\n", id)
 		return rand.Int()
 	}
 	// creates a breaker that fails at the N request
 	breaker, _ := sut.CreateCircuitBreaker(
-		N-1, doRequest, func(_ int) bool { return true },
+		N-1, doRequest, func(_ context.Context, _ int) bool { return true },
 	)
 	// run N failling requests
 	for i := range N {
-		wg.Go(func() { breakerCh <- breaker(now, i+1) })
+		wg.Go(func() { breakerCh <- breaker(ctx, now, i+1) })
 	}
 	// closes syncCh so that all request are released at the same time
 	close(syncCh)

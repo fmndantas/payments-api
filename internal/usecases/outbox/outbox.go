@@ -156,7 +156,7 @@ func ProcessOutboxEvents(
 	// TODO: paralellize
 	for _, outboxEvent := range outboxEvents {
 		slog.Info("processing outbox event", "id", outboxEvent.Id)
-		pspOutput := sendToPsp(nowReference, psp.PspInput{Context: ctx, Outbox: outboxEvent})
+		pspOutput := sendToPsp(ctx, nowReference, psp.PspInput{Outbox: outboxEvent})
 		if pspOutput.IsOpen() {
 			slog.Error("circuit breaker tripped")
 			shouldUnreserveBatch = true

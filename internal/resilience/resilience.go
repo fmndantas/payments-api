@@ -1,6 +1,7 @@
 package resilience
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -14,7 +15,7 @@ const (
 	Closed circuitBreakerStatus = "closed"
 )
 
-type DoRequest[U any, T any] = func(U) T
+type DoRequest[U any, T any] = func(context.Context, U) T
 
 type CircuitBreakerState[T any] struct {
 	id             uuid.UUID
@@ -115,12 +116,12 @@ func (state CircuitBreakerState[T]) ConstructNextState(
 	}
 }
 
-type CircuitBreakerHandler[U any, T comparable] = func(time.Time, U) *CircuitBreakerState[T]
+type CircuitBreakerHandler[U any, T comparable] = func(context.Context, time.Time, U) *CircuitBreakerState[T]
 
 func CreateCircuitBreaker[U any, T comparable](
 	maximumNumberOfErrorsBeforeOpen int,
 	doRequest DoRequest[U, T],
-	checkRequestIsErrored func(T) bool,
+	checkRequestIsErrored func(context.Context, T) bool,
 ) (CircuitBreakerHandler[U, T], func(time.Time) bool) {
 	var (
 		mutex = sync.RWMutex{}
@@ -135,7 +136,7 @@ func CreateCircuitBreaker[U any, T comparable](
 		return state.IsOpen() && !state.IsHalfOpen(nowReference)
 	}
 
-	handler := func(nowReference time.Time, requestInput U) *CircuitBreakerState[T] {
+	handler := func(ctx context.Context, nowReference time.Time, requestInput U) *CircuitBreakerState[T] {
 		var (
 			requestResult   T
 			shouldDoRequest = false
@@ -146,14 +147,18 @@ func CreateCircuitBreaker[U any, T comparable](
 		mutex.RUnlock()
 
 		if shouldDoRequest {
-			requestResult = doRequest(requestInput)
+			requestResult = doRequest(ctx, requestInput)
 		}
 
 		mutex.Lock()
 		defer mutex.Unlock()
 
+		checkRequestIsErroredWithCtx := func(input T) bool {
+			return checkRequestIsErrored(ctx, input)
+		}
+
 		state = state.ConstructNextState(
-			nowReference, requestResult, maximumNumberOfErrorsBeforeOpen, checkRequestIsErrored,
+			nowReference, requestResult, maximumNumberOfErrorsBeforeOpen, checkRequestIsErroredWithCtx,
 		)
 
 		return state

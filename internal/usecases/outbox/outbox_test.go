@@ -62,7 +62,7 @@ func TestMain(m *testing.M) {
 }
 
 func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) (outbox.SendToPsp, func(time.Time) bool) {
-	doRequest := func(_ psp.PspInput) psp.PspOutput {
+	doRequest := func(_ context.Context, _ psp.PspInput) psp.PspOutput {
 		return psp.PspOutput{HttpResponse: psp.PspHttpResponse{
 			StatusCode: 202,
 			JsonBody:   fmt.Sprintf("{ \"id_psp_payment\": \"%s\" }", idPspPayment.String()),
@@ -71,12 +71,12 @@ func sendOutboxEventToPspFakeSuccess(idPspPayment uuid.UUID) (outbox.SendToPsp, 
 	return resilience.CreateCircuitBreaker(
 		rand.IntN(1000),
 		doRequest,
-		func(_ psp.PspOutput) bool { return false },
+		func(_ context.Context, _ psp.PspOutput) bool { return false },
 	)
 }
 
 func sendOutboxEventToPspFakeServerError() (outbox.SendToPsp, func(time.Time) bool) {
-	doRequest := func(_ psp.PspInput) psp.PspOutput {
+	doRequest := func(_ context.Context, _ psp.PspInput) psp.PspOutput {
 		return psp.PspOutput{HttpResponse: psp.PspHttpResponse{
 			StatusCode: 500,
 			JsonBody:   "{ \"error\": \"the server couldn't process the request\" }",
@@ -85,7 +85,7 @@ func sendOutboxEventToPspFakeServerError() (outbox.SendToPsp, func(time.Time) bo
 	return resilience.CreateCircuitBreaker(
 		rand.IntN(1000),
 		doRequest,
-		func(_ psp.PspOutput) bool { return false },
+		func(_ context.Context, _ psp.PspOutput) bool { return false },
 	)
 }
 
@@ -446,7 +446,7 @@ func TestProcessOutboxEventsWithCircuitBreaker(t *testing.T) {
 		)
 		require.NoError(t, err, "checkout")
 	}
-	doRequest := func(_ psp.PspInput) psp.PspOutput {
+	doRequest := func(_ context.Context, _ psp.PspInput) psp.PspOutput {
 		return psp.PspOutput{HttpResponse: psp.PspHttpResponse{
 			StatusCode: 500,
 			JsonBody:   "{ \"error\": \"the server couldn't process the request\" }",
@@ -455,7 +455,7 @@ func TestProcessOutboxEventsWithCircuitBreaker(t *testing.T) {
 	sendToPsp, isOpen := resilience.CreateCircuitBreaker(
 		25,
 		doRequest,
-		func(_ psp.PspOutput) bool { return true },
+		func(_ context.Context, _ psp.PspOutput) bool { return true },
 	)
 	// act
 	err := outbox.ProcessOutboxEvents(

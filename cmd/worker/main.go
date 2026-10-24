@@ -39,22 +39,22 @@ func main() {
 	}
 
 	var (
-		context = context.Background()
-		ch      = make(chan error)
+		ctx = context.Background()
+		ch  = make(chan error)
 	)
 
 	pspWithCircuitBreaker, isPspCircuitOpen := resilience.CreateCircuitBreaker(
 		20,
 		psp.SendOutboxEventToPspFake,
-		func(output psp.PspOutput) bool {
-			return output.HttpResponse.StatusCode >= 500 || output.Error != nil
+		func(ctx context.Context, output psp.PspOutput) bool {
+			return output.HttpResponse.StatusCode >= 500 || ctx.Err() != nil || output.Error != nil
 		},
 	)
 
 	for now := range time.Tick(5 * time.Second) {
 		go func() {
 			ch <- outbox.ProcessOutboxEvents(
-				context,
+				ctx,
 				tree,
 				now,
 				10,
