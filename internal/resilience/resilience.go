@@ -48,7 +48,7 @@ func (state CircuitBreakerState[T]) IsOpen() bool {
 	return state.status == Open
 }
 
-func (state CircuitBreakerState[T]) IsHalfOpen(nowReference time.Time) bool {
+func (state CircuitBreakerState[T]) shouldProbe(nowReference time.Time) bool {
 	if state.openUntil == nil {
 		return false
 	}
@@ -103,7 +103,7 @@ func (state CircuitBreakerState[T]) ConstructNextState(
 		} else {
 			return CreateState(Closed, 0, nil, requestResult)
 		}
-	case state.IsHalfOpen(nowReference):
+	case state.shouldProbe(nowReference):
 		if isRequestResultErrored {
 			return CreateState(Open, state.numberOfErrors+1, &openUntil, requestResult)
 		} else {
@@ -133,28 +133,26 @@ func CreateCircuitBreaker[U any, T comparable](
 		mutex.RLock()
 		defer mutex.RUnlock()
 
-		return state.IsOpen() && !state.IsHalfOpen(nowReference)
+		return state.IsOpen() && !state.shouldProbe(nowReference)
 	}
 
 	handler := func(ctx context.Context, nowReference time.Time, requestInput U) *CircuitBreakerState[T] {
 		var (
-			requestResult   T
-			shouldDoRequest = false
+			requestResult                T
+			checkRequestIsErroredWithCtx = func(input T) bool {
+				return checkRequestIsErrored(ctx, input)
+			}
 		)
-
-		mutex.RLock()
-		shouldDoRequest = state.IsClosed() || state.IsHalfOpen(nowReference)
-		mutex.RUnlock()
-
-		if shouldDoRequest {
-			requestResult = doRequest(ctx, requestInput)
-		}
 
 		mutex.Lock()
 		defer mutex.Unlock()
 
-		checkRequestIsErroredWithCtx := func(input T) bool {
-			return checkRequestIsErrored(ctx, input)
+		if state.IsClosed() {
+			requestResult = doRequest(ctx, requestInput)
+		}
+
+		if state.shouldProbe(nowReference) {
+			requestResult = doRequest(ctx, requestInput)
 		}
 
 		state = state.ConstructNextState(
