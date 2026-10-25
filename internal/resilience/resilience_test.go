@@ -204,6 +204,53 @@ func TestCheckConcurrencyProtectionB(t *testing.T) {
 }
 
 /*
+Open the breaker, advance beyond OpenUntil, then start many goroutines behind a barrier.
+Assert doRequest runs once, not N times.
+*/
+func TestCheckConcurrencyProtectionC(t *testing.T) {
+	// arrange
+	var (
+		N              = 10
+		ctx            = context.Background()
+		now            = time.Now()
+		syncCh         = make(chan struct{})
+		breakerCh      = make(chan *sut.CircuitBreakerState[int], N)
+		anyInput       = rand.IntN(1000)
+		wg             sync.WaitGroup
+		requestCounter = 0
+	)
+	doRequest := func(_ context.Context, id int) int {
+		requestCounter += 1
+		<-syncCh
+		fmt.Printf("%d: doing request\n", id)
+		return rand.Int()
+	}
+	breaker, _ := sut.CreateCircuitBreaker(
+		0, doRequest, func(_ context.Context, _ int) bool { return true },
+	)
+	go func() { breakerCh <- breaker(ctx, now, anyInput) }()
+	syncCh <- struct{}{}
+	// here, the breaker should be open
+	result := <-breakerCh
+	assert.True(t, result.IsOpen(), "first call should open the breaker")
+	require.NotNil(t, result.OpenUntil)
+	// act
+	// call the open breaker N times
+	requestCounter = 0
+	for range N {
+		wg.Go(
+			func() {
+				breakerCh <- breaker(ctx, now.Add(time.Hour), anyInput)
+			},
+		)
+	}
+	close(syncCh)
+	wg.Wait()
+	// assert
+	assert.Equal(t, 1, requestCounter)
+}
+
+/*
 Test different transitions between circuit breaker states
 */
 func TestConstructNextState(t *testing.T) {
