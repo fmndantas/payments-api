@@ -145,8 +145,8 @@ func TestCheckConcurrencyProtectionA(t *testing.T) {
 	// act
 	go func() { breakerCh <- breaker(ctx, now, 1) }() // 1. this starts to run, but...
 	go func() { breakerCh <- breaker(ctx, now, 2) }() // 3. this also starts to run, but the mutex avoids the (second) request execution
-	<-syncCh // 4. this run due to the first run
-	<-syncCh // 5. this never runs because the the second request is blocked
+	<-syncCh                                          // 4. this run due to the first run
+	<-syncCh                                          // 5. this never runs because the the second request is blocked
 	// this request will be the first and will fail; it opens the breaker
 	requestFails = true
 	requestReleases[1] <- struct{}{}
@@ -251,6 +251,54 @@ func TestCheckConcurrencyProtectionC(t *testing.T) {
 	wg.Wait()
 	// assert
 	assert.Equal(t, int32(1), requestCalls, "only one probe request should be made with many concurrent requests")
+}
+
+/*
+With the circuit already open, run many goroutines and assert zero calls to doRequest.
+*/
+func TestCheckConcurrencyProtectionD(t *testing.T) {
+	// arrange
+	var (
+		N            = 100
+		ctx          = context.Background()
+		now          = time.Now()
+		start        = make(chan struct{})
+		breakerCh    = make(chan *sut.CircuitBreakerState[int], N)
+		anyInput     = rand.IntN(1000)
+		wg           sync.WaitGroup
+		requestCalls int32 = 0
+	)
+	doRequest := func(_ context.Context, _ int) int {
+		atomic.AddInt32(&requestCalls, 1)
+		return rand.Int()
+	}
+	breaker, _ := sut.CreateCircuitBreaker(
+		0, doRequest, func(_ context.Context, _ int) bool { return true },
+	)
+
+	// open the breaker
+	opened := breaker(ctx, now, anyInput)
+	require.True(t, opened.IsOpen(), "first call should open the breaker")
+	atomic.StoreInt32(&requestCalls, 0)
+
+	// act
+	for range N {
+		wg.Go(
+			func() {
+				<-start
+				breakerCh <- breaker(ctx, now, anyInput)
+			},
+		)
+	}
+	close(start)
+	wg.Wait()
+
+	// assert
+	assert.Equal(t, int32(0), atomic.LoadInt32(&requestCalls), "open breaker should not call doRequest")
+	for range N {
+		result := <-breakerCh
+		assert.True(t, result.IsOpen(), "breaker should remain open")
+	}
 }
 
 /*
