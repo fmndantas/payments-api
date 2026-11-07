@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/fmndantas/payments/internal/db"
 	"github.com/fmndantas/payments/internal/dependencies"
@@ -24,17 +26,11 @@ func TestHappyPath(t *testing.T) {
 		dbLocalConfiguration, ctx,
 	)
 	defer stopPostgres()
-	if err != nil {
-		t.Fatalf("error when initializing Postgres Testcontainer: %s", err)
-	}
+	require.NoErrorf(t, err, "error when initializing Postgres Testcontainer: %s")
 	host, err := container.Host(ctx)
-	if err != nil {
-		log.Fatalf("failed to get testcontainer host: %s", err)
-	}
+	require.NoErrorf(t, err, "failed to get testcontainer host: %s")
 	port, err := container.MappedPort(ctx, fmt.Sprintf("%d", dbLocalConfiguration.Port))
-	if err != nil {
-		log.Fatalf("failed to get testcontainer mapped port: %s", err)
-	}
+	require.NoErrorf(t, err, "failed to get testcontainer mapped port: %s")
 	dbTestConfiguration := db.DbConfiguration{
 		Host:     host,
 		Port:     int(port.Num()),
@@ -43,32 +39,25 @@ func TestHappyPath(t *testing.T) {
 		Password: dbLocalConfiguration.Password,
 	}
 	tree, err := dependencies.Initialize(dbTestConfiguration)
-	if err != nil {
-		log.Fatalf("failed to initialize the dependencies tree: %s", err)
-	}
+	require.NoErrorf(t, err, "failed to initialize the dependencies tree: %s")
 	// act
 	idPaymentExternal, err := checkout.HandleCheckout(
 		tree, ctx, uuid.New(), test.IdDestinyAccountAsUuid(), test.IdDestinyAccountAsUuid(), time.Now(),
 	)
 	log.Printf("idPaymentExternal = %s", idPaymentExternal)
 	// assert
-	if err != nil {
-		log.Fatalf("checkout running resulted in error: %s", err)
-	}
+	require.NoErrorf(t, err, "checkout running resulted in error: %s")
 	// checks if payment was created
 	var idPaymentInternal int64
 	err = tree.DbPool.QueryRow(
 		ctx, "select id_internal from payment where id_external = $1", idPaymentExternal,
 	).Scan(&idPaymentInternal)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	// checks if outbox was created
 	var idOutbox int64
 	err = tree.DbPool.QueryRow(
 		ctx, "select id from outbox where id_payment = $1", idPaymentInternal,
 	).Scan(&idOutbox)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	assert.Positive(t, idOutbox, "idOutbox should be positive")
 }

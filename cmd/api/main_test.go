@@ -13,6 +13,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/fmndantas/payments/cmd/api"
 	"github.com/fmndantas/payments/test"
@@ -25,7 +27,6 @@ type CheckoutResponse struct {
 	IdPayment string `json:"id_payment"`
 }
 
-// TODO: having this global variable is a anti-pattern?
 var (
 	router *gin.Engine
 )
@@ -67,10 +68,7 @@ func expectStatusCode(
 	w *httptest.ResponseRecorder,
 	expectedStatusCode int,
 ) {
-	if w.Code != expectedStatusCode {
-		t.Errorf("expected http response to be %d, but was %d", expectedStatusCode, w.Code)
-		t.Errorf("%v", w.Body)
-	}
+	assert.Equal(t, expectedStatusCode, w.Code, "wrong HTTP response status code")
 }
 
 func TestHealthEndpoint(t *testing.T) {
@@ -100,12 +98,8 @@ func TestCheckoutHappyPath(t *testing.T) {
 	expectStatusCode(t, w, 200)
 	var checkoutResponse CheckoutResponse
 	err := json.Unmarshal(w.Body.Bytes(), &checkoutResponse)
-	if err != nil {
-		t.Fatalf("response unmarshal resulted in an error")
-	}
-	if len(checkoutResponse.IdPayment) == 0 {
-		t.Errorf("id_payment is empty")
-	}
+	require.NoError(t, err, "response unmarshal resulted in an error")
+	assert.Positive(t, checkoutResponse.IdPayment, "id_payment is not positive")
 }
 
 func TestCheckoutIdempotency(t *testing.T) {
