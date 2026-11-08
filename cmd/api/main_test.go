@@ -109,7 +109,7 @@ func TestCheckoutIdempotency(t *testing.T) {
 		IdRequest:        fmt.Sprintf("request:checkout:%s", uuid.NewString()),
 	}
 	payloadJson, _ := json.Marshal(payload)
-	for i := range 5 {
+	for i := range 10 {
 		req, _ := http.NewRequest("POST", "/checkout", bytes.NewBuffer(payloadJson))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -117,8 +117,8 @@ func TestCheckoutIdempotency(t *testing.T) {
 			// first time, gets 200
 			expectStatusCode(t, w, 200)
 		} else {
-			// repetead id_request avoids reprocessings
-			expectStatusCode(t, w, 409)
+			// repeated id_request avoids reprocessings
+			expectStatusCode(t, w, 202)
 		}
 	}
 }

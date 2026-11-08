@@ -58,7 +58,7 @@ func Checkout(t *dependencies.Tree, ctx *gin.Context) {
 		return
 	}
 
-	idExternalPayment, err := checkout.HandleCheckout(
+	result, err := checkout.HandleCheckout(
 		t, ctx, idRequest, idSourceAccount, idDestinyAccount, time.Now(),
 	)
 
@@ -76,5 +76,12 @@ func Checkout(t *dependencies.Tree, ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{"id_payment": idExternalPayment})
+	var statusSuccess int
+	if result.IdRequestAlreadyProcessed {
+		statusSuccess = http.StatusAccepted
+	} else {
+		statusSuccess = http.StatusOK
+	}
+
+	ctx.JSON(statusSuccess, gin.H{"id_payment": result.IdExternalPayment})
 }

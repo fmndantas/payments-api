@@ -2,11 +2,14 @@ package internal_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 
 	"github.com/fmndantas/payments/internal/usecases/outbox"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,4 +31,8 @@ func TestUnmarshallingError(t *testing.T) {
 	payloadString := "foo"
 	err := json.Unmarshal([]byte(payloadString), &payload)
 	require.Error(t, err)
+}
+
+func TestNilErrorIsNotASentinel(t *testing.T) {
+	assert.False(t, errors.Is(nil, pgx.ErrNoRows))
 }

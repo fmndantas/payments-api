@@ -41,16 +41,18 @@ func TestHappyPath(t *testing.T) {
 	tree, err := dependencies.Initialize(dbTestConfiguration)
 	require.NoErrorf(t, err, "failed to initialize the dependencies tree: %s")
 	// act
-	idPaymentExternal, err := checkout.HandleCheckout(
+	result, err := checkout.HandleCheckout(
 		tree, ctx, uuid.New(), test.IdDestinyAccountAsUuid(), test.IdDestinyAccountAsUuid(), time.Now(),
 	)
-	log.Printf("idPaymentExternal = %s", idPaymentExternal)
+	log.Printf("idPaymentExternal = %s", result.IdExternalPayment)
 	// assert
 	require.NoErrorf(t, err, "checkout running resulted in error: %s")
 	// checks if payment was created
 	var idPaymentInternal int64
 	err = tree.DbPool.QueryRow(
-		ctx, "select id_internal from payment where id_external = $1", idPaymentExternal,
+		ctx,
+		"select id_internal from payment where id_external = $1",
+		result.IdExternalPayment,
 	).Scan(&idPaymentInternal)
 	require.NoError(t, err)
 	// checks if outbox was created
