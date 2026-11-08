@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/fmndantas/payments/internal/dependencies"
 	"github.com/fmndantas/payments/internal/usecases/eventstatus"
@@ -16,6 +17,11 @@ var (
 	ErrorCheckoutIdRequestAlreadyWasProcessed = errors.New("this request was already processed")
 )
 
+type HandleCheckoutResult struct {
+	IdExternalPayment         uuid.UUID
+	IdRequestAlreadyProcessed bool
+}
+
 func HandleCheckout(
 	t *dependencies.Tree,
 	ctx context.Context,
@@ -23,14 +29,7 @@ func HandleCheckout(
 	idSourceAccount,
 	idDestinyAccount uuid.UUID,
 	nowReference time.Time,
-) (uuid.UUID, error) {
-	var foo string
-	err := t.DbPool.QueryRow(ctx, "select id_request from payment where id_request = $1", idRequest).Scan(&foo)
-
-	if err == nil {
-		return uuid.Nil, ErrorCheckoutIdRequestAlreadyWasProcessed
-	}
-
+) (HandleCheckoutResult, error) {
 	accountsRows, err := t.DbPool.Query(
 		ctx,
 		"select id_internal, id_external from account where id_external = $1 or id_external = $2",
@@ -38,8 +37,10 @@ func HandleCheckout(
 		idDestinyAccount,
 	)
 
+	handleCheckoutResultNil := HandleCheckoutResult{}
+
 	if err != nil {
-		return uuid.Nil, err
+		return handleCheckoutResultNil, err
 	}
 	defer accountsRows.Close()
 
@@ -62,43 +63,66 @@ func HandleCheckout(
 	}
 
 	if idInternalSourceAccount == nil || idInternalDestinyAccount == nil {
-		return uuid.Nil, ErrorCheckoutAtLeastOneAccountIsMissing
+		return handleCheckoutResultNil, ErrorCheckoutAtLeastOneAccountIsMissing
 	}
 
 	tx, err := t.DbPool.Begin(ctx)
 
 	if err != nil {
-		return uuid.Nil, err
+		return handleCheckoutResultNil, err
 	}
 
+	defer tx.Rollback(ctx)
+
 	idExternalPayment, idInternalPayment := uuid.New(), 0
-	err = tx.QueryRow(
+	createPaymentErr := tx.QueryRow(
 		ctx,
 		`insert into payment(id_external, id_request, id_source_account, id_destiny_account, created_at)
 		values ($1, $2, $3, $4, $5)
+		on conflict (id_request) do nothing
 		returning id_internal`,
 		idExternalPayment, idRequest, idInternalSourceAccount, idInternalDestinyAccount, nowReference,
 	).Scan(&idInternalPayment)
 
-	if err != nil {
-		return uuid.Nil, err
+	if createPaymentErr != nil && !errors.Is(createPaymentErr, pgx.ErrNoRows) {
+		return handleCheckoutResultNil, createPaymentErr
 	}
 
-	_, err = tx.Exec(
+	if createPaymentErr != nil && errors.Is(createPaymentErr, pgx.ErrNoRows) {
+		// The payment wasn't inserted due to a `id_request` conflict
+		checkAccountsErr := tx.QueryRow(
+			ctx,
+			`select id_external from payment where id_request = $1 and id_source_account = $2 and id_destiny_account = $3`,
+			idRequest, idInternalSourceAccount, idInternalDestinyAccount,
+		).Scan(&idExternalPayment)
+
+		switch {
+		case checkAccountsErr == nil:
+			return HandleCheckoutResult{IdExternalPayment: idExternalPayment, IdRequestAlreadyProcessed: true}, nil
+		case errors.Is(checkAccountsErr, pgx.ErrNoRows):
+			return handleCheckoutResultNil, ErrorCheckoutIdRequestAlreadyWasProcessed
+		default:
+			return handleCheckoutResultNil, err
+		}
+	}
+
+	_, createOutboxErr := tx.Exec(
 		ctx,
 		`insert into outbox (id_payment, status, next_try_at, created_at)
 		values ($1, $2, $3, $4)`,
 		idInternalPayment, eventstatus.Unprocessed, nowReference, nowReference,
 	)
-	defer tx.Rollback(ctx)
 
-	if err != nil {
-		return uuid.Nil, err
+	if createOutboxErr != nil {
+		return handleCheckoutResultNil, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return uuid.Nil, err
+		return handleCheckoutResultNil, err
 	}
 
-	return idExternalPayment, nil
+	return HandleCheckoutResult{
+		IdExternalPayment:         idExternalPayment,
+		IdRequestAlreadyProcessed: false,
+	}, nil
 }
