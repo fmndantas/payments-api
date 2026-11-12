@@ -67,16 +67,8 @@ func HandleCheckout(
 		return handleCheckoutResultNil, ErrorCheckoutAtLeastOneAccountIsMissing
 	}
 
-	tx, err := t.DbPool.Begin(ctx)
-
-	if err != nil {
-		return handleCheckoutResultNil, err
-	}
-
-	defer tx.Rollback(ctx)
-
 	idExternalPayment, idInternalPayment := uuid.New(), 0
-	createPaymentErr := tx.QueryRow(
+	createPaymentErr := t.DbPool.QueryRow(
 		ctx,
 		`insert into payment(id_external, id_request, id_source_account, id_destiny_account, created_at)
 		values ($1, $2, $3, $4, $5)
@@ -91,7 +83,7 @@ func HandleCheckout(
 
 	if createPaymentErr != nil && errors.Is(createPaymentErr, pgx.ErrNoRows) {
 		// The payment wasn't inserted due to a `id_request` conflict
-		checkAccountsErr := tx.QueryRow(
+		checkAccountsErr := t.DbPool.QueryRow(
 			ctx,
 			`select id_external from payment where id_request = $1 and id_source_account = $2 and id_destiny_account = $3`,
 			idRequest, idInternalSourceAccount, idInternalDestinyAccount,
@@ -106,6 +98,14 @@ func HandleCheckout(
 			return handleCheckoutResultNil, err
 		}
 	}
+
+	tx, err := t.DbPool.Begin(ctx)
+
+	if err != nil {
+		return handleCheckoutResultNil, err
+	}
+
+	defer tx.Rollback(ctx)
 
 	_, createOutboxErr := tx.Exec(
 		ctx,
