@@ -42,7 +42,6 @@ func HandleCheckout(
 	if err != nil {
 		return handleCheckoutResultNil, err
 	}
-	defer accountsRows.Close()
 
 	var idInternalSourceAccount, idInternalDestinyAccount *int
 	for accountsRows.Next() {
@@ -61,6 +60,8 @@ func HandleCheckout(
 			break
 		}
 	}
+	
+	accountsRows.Close()
 
 	if idInternalSourceAccount == nil || idInternalDestinyAccount == nil {
 		return handleCheckoutResultNil, ErrorCheckoutAtLeastOneAccountIsMissing
