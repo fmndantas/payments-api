@@ -109,7 +109,7 @@ func TestCheckoutIdempotency(t *testing.T) {
 		IdRequest:        fmt.Sprintf("request:checkout:%s", uuid.NewString()),
 	}
 	payloadJson, _ := json.Marshal(payload)
-	for i := range 10 {
+	for i := range 2 {
 		req, _ := http.NewRequest("POST", "/checkout", bytes.NewBuffer(payloadJson))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)

@@ -115,7 +115,7 @@ func TestIfSuccessResetsErrorCounting(t *testing.T) {
 
 /*
 FIX: deadlock prone
-Start two requests while circuit is closed;
+Start two requests while the circuit is closed;
 block both inside doRequest with channels.
 Release failing request first so it opens circuit, then release successful request;
 assert breaker remains open, because second request was authorized from stale state.
@@ -172,7 +172,7 @@ func TestCheckConcurrencyProtectionB(t *testing.T) {
 		N         = 10 // number of requests
 		syncCh    = make(chan struct{})
 		breakerCh = make(chan *sut.CircuitBreakerState[int], N)
-		wg        = sync.WaitGroup{}
+		wg        sync.WaitGroup
 	)
 	doRequest := func(_ context.Context, id int) int {
 		<-syncCh
